@@ -1,0 +1,19 @@
+[package]
+name = "printltools"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+flate2 = "1.1.9"
+iced = { version = "0.14.0", features = ["tiny-skia", "thread-pool"] }
+lopdf = "0.40.0"
+rfd = "0.15.4"
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_RestartManager",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
