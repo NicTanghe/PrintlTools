@@ -19,6 +19,7 @@ enum View {
     PageCounterPrompt,
     UsbDriveSelect,
     Processing,
+    Result,
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +45,6 @@ pub struct PrintLTools {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Noop,
     WindowOpened(window::Id),
     WindowCloseRequested(window::Id),
     Tray(TrayEvent),
@@ -116,7 +116,6 @@ fn subscription(_state: &PrintLTools) -> Subscription<Message> {
 
 fn update(state: &mut PrintLTools, message: Message) -> Task<Message> {
     match message {
-        Message::Noop => Task::none(),
         Message::WindowOpened(id) => {
             state.last_window = Some(id);
             Task::none()
@@ -194,6 +193,7 @@ fn update(state: &mut PrintLTools, message: Message) -> Task<Message> {
         }
         Message::DismissResult => {
             state.last_result = None;
+            state.view = View::Launcher;
             Task::none()
         }
     }
@@ -567,13 +567,13 @@ fn run_page_counter(options: PageCounterOptions) -> ToolResult {
 }
 
 fn record_result(state: &mut PrintLTools, result: ToolResult) -> Task<Message> {
-    state.last_result = Some(result.clone());
+    state.last_result = Some(result);
     state.processing_title = None;
     state.processing_detail = None;
     state.usb_drives.clear();
-    state.view = View::Launcher;
+    state.view = View::Result;
 
-    Task::perform(dialogs::show_result_threaded(result), |_| Message::Noop)
+    show_launcher(state)
 }
 
 async fn run_result_on_thread(f: impl FnOnce() -> ToolResult + Send + 'static) -> ToolResult {
@@ -620,6 +620,7 @@ fn view(state: &PrintLTools) -> Element<'_, Message> {
         View::PageCounterPrompt => page_counter_prompt_view(state),
         View::UsbDriveSelect => usb_drive_select_view(state),
         View::Processing => processing_view(state),
+        View::Result => result_view(state),
     };
 
     container(column![header, body].spacing(18))
@@ -691,6 +692,49 @@ fn settings_view(state: &PrintLTools) -> Element<'_, Message> {
         text("Start with Windows and persisted settings are planned for Epic F."),
     ]
     .spacing(14)
+    .into()
+}
+
+fn result_view(state: &PrintLTools) -> Element<'_, Message> {
+    let Some(result) = &state.last_result else {
+        return container(
+            column![
+                text("No result").size(20),
+                button("Back to launcher").on_press(Message::DismissResult),
+            ]
+            .spacing(14),
+        )
+        .padding(12)
+        .into();
+    };
+
+    let level = match result.level {
+        ResultLevel::Info => "Info",
+        ResultLevel::Warning => "Warning",
+        ResultLevel::Error => "Error",
+    };
+
+    let mut details = column![
+        text(format!("{}: {}", level, result.title)).size(20),
+        text(&result.summary).size(16),
+    ]
+    .spacing(8);
+
+    for detail in &result.details {
+        details = details.push(text(detail).size(13));
+    }
+
+    scrollable(
+        column![
+            details,
+            row![
+                button("Back to launcher").on_press(Message::DismissResult),
+                button("Keep result").on_press(Message::OpenLauncher),
+            ]
+            .spacing(10),
+        ]
+        .spacing(16),
+    )
     .into()
 }
 

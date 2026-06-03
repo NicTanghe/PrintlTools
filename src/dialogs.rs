@@ -2,9 +2,7 @@ use std::path::PathBuf;
 use std::thread;
 
 use iced::futures::channel::oneshot;
-use rfd::{FileDialog, MessageButtons, MessageDialog, MessageLevel};
-
-use crate::results::{ResultLevel, ToolResult};
+use rfd::FileDialog;
 
 pub fn pick_folder(title: &str) -> Option<PathBuf> {
     FileDialog::new().set_title(title).pick_folder()
@@ -23,28 +21,6 @@ pub fn save_pdf_file(title: &str, default_name: &str) -> Option<PathBuf> {
         .set_file_name(default_name)
         .add_filter("PDF files", &["pdf"])
         .save_file()
-}
-
-pub fn show_result(result: &ToolResult) {
-    let mut description = result.summary.clone();
-
-    if !result.details.is_empty() {
-        description.push_str("\n\n");
-        description.push_str(&result.details.join("\n"));
-    }
-
-    let level = match result.level {
-        ResultLevel::Info => MessageLevel::Info,
-        ResultLevel::Warning => MessageLevel::Warning,
-        ResultLevel::Error => MessageLevel::Error,
-    };
-
-    let _ = MessageDialog::new()
-        .set_level(level)
-        .set_title(&result.title)
-        .set_description(description)
-        .set_buttons(MessageButtons::Ok)
-        .show();
 }
 
 pub async fn pick_folder_threaded(title: &'static str) -> Option<PathBuf> {
@@ -66,10 +42,6 @@ pub async fn save_pdf_file_threaded(
     run_on_dialog_thread(move || save_pdf_file(title, default_name))
         .await
         .unwrap_or(None)
-}
-
-pub async fn show_result_threaded(result: ToolResult) {
-    let _ = run_on_dialog_thread(move || show_result(&result)).await;
 }
 
 async fn run_on_dialog_thread<T>(
