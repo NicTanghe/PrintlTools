@@ -106,7 +106,7 @@ pub fn run() -> cssimpler::renderer::Result<()> {
         WindowConfig {
             clear_color: Color::rgb(54, 67, 78),
             frame_time: Duration::from_millis(120),
-            ..WindowConfig::new("PrintLTools", 620, 680)
+            ..WindowConfig::new("PrintLTools", 900, 760)
                 .with_glass_capable(true)
                 .with_decorations(false)
         },
@@ -728,13 +728,18 @@ fn view(state: &PrintLTools) -> Node {
             <section class="shell">
                 <header class="topbar">
                     <div class="brand">
-                        <h1>PrintLTools</h1>
-                        <p>Print and file utilities</p>
+                        <span class="brand-mark">
+                            {icon_document()}
+                        </span>
+                        <div class="brand-copy">
+                            <h1>PrintLTools</h1>
+                            <p>Print and file utilities</p>
+                        </div>
                     </div>
                     <div class="top-actions">
-                        {nav_button("Launcher", command_open_launcher, state.view == View::Launcher)}
-                        {nav_button("Settings", command_open_settings, state.view == View::Settings)}
-                        {add_class(action_button("Quit", command_exit), "danger")}
+                        {nav_button("Launcher", icon_launch(), command_open_launcher, state.view == View::Launcher)}
+                        {nav_button("Settings", icon_sliders(), command_open_settings, state.view == View::Settings)}
+                        {add_class(nav_button("Quit", icon_exit(), command_exit, false), "danger")}
                     </div>
                 </header>
                 <main class="content">
@@ -929,19 +934,29 @@ fn tool_button(tool: &'static ToolDefinition) -> Node {
 
     match tool.status {
         ToolStatus::Ready => ui! {
-            <button class="tool-button" type="button" onclick={tool_handler(tool.id)}>
-                <span class="button-fill"></span>
-                <span class="tool-title">{tool.name}</span>
-                <span class="tool-description">{tool.description}</span>
-                <span class="tool-meta">{format!("{} - {}", tool.short_name, status)}</span>
+            <button class={tool_button_class(tool.id)} type="button" onclick={tool_handler(tool.id)}>
+                {tool_icon(tool.id)}
+                <span class="tool-copy">
+                    <span class="tool-title">{tool.name}</span>
+                    <span class="tool-description">{tool.description}</span>
+                    <span class="tool-meta">{format!("{} - {}", tool.short_name, status)}</span>
+                </span>
+                <span class="tool-chevron">
+                    {icon_chevron()}
+                </span>
             </button>
         },
         ToolStatus::Planned => ui! {
-            <button class="tool-button disabled" type="button">
-                <span class="button-fill"></span>
-                <span class="tool-title">{tool.name}</span>
-                <span class="tool-description">{tool.description}</span>
-                <span class="tool-meta">{format!("{} - {}", tool.short_name, status)}</span>
+            <button class={format!("{} disabled", tool_button_class(tool.id))} type="button">
+                {tool_icon(tool.id)}
+                <span class="tool-copy">
+                    <span class="tool-title">{tool.name}</span>
+                    <span class="tool-description">{tool.description}</span>
+                    <span class="tool-meta">{format!("{} - {}", tool.short_name, status)}</span>
+                </span>
+                <span class="tool-chevron">
+                    {icon_chevron()}
+                </span>
             </button>
         },
     }
@@ -950,8 +965,8 @@ fn tool_button(tool: &'static ToolDefinition) -> Node {
 fn latest_result_panel(result: Option<&ToolResult>) -> Node {
     let Some(result) = result else {
         return ui! {
-            <div class="empty-state">
-                <p>Select a tool to start.</p>
+            <div class="empty-state empty-result">
+                {icon_history()}
             </div>
         };
     };
@@ -992,7 +1007,6 @@ fn slide_options(selected: u32) -> Node {
         let handler = slide_handler(value);
         let mut button = ui! {
             <button class="segment-button" type="button" onclick={handler}>
-                <span class="button-fill"></span>
                 <span class="button-text">{label}</span>
             </button>
         };
@@ -1010,17 +1024,26 @@ fn slide_options(selected: u32) -> Node {
 fn drive_button(drive: &DriveInfo, handler: fn()) -> Node {
     ui! {
         <button class="drive-button" type="button" onclick={handler}>
-            <span class="button-fill"></span>
-            <span class="drive-title">{drive.display_name()}</span>
-            <span class="drive-root">{format!("Root: {}", display_path(&drive.root))}</span>
+            <span class="drive-icon">
+                {icon_usb()}
+            </span>
+            <span class="drive-copy">
+                <span class="drive-title">{drive.display_name()}</span>
+                <span class="drive-root">{format!("Root: {}", display_path(&drive.root))}</span>
+            </span>
+            <span class="tool-chevron">
+                {icon_chevron()}
+            </span>
         </button>
     }
 }
 
-fn nav_button(label: &'static str, handler: fn(), selected: bool) -> Node {
+fn nav_button(label: &'static str, icon: Node, handler: fn(), selected: bool) -> Node {
     let button = ui! {
         <button class="nav-button" type="button" onclick={handler}>
-            <span class="button-fill"></span>
+            <span class="button-icon">
+                {icon}
+            </span>
             <span class="button-text">{label}</span>
         </button>
     };
@@ -1035,7 +1058,6 @@ fn nav_button(label: &'static str, handler: fn(), selected: bool) -> Node {
 fn action_button(label: &'static str, handler: fn()) -> Node {
     ui! {
         <button class="action-button" type="button" onclick={handler}>
-            <span class="button-fill"></span>
             <span class="button-text">{label}</span>
         </button>
     }
@@ -1044,8 +1066,10 @@ fn action_button(label: &'static str, handler: fn()) -> Node {
 fn toggle_button(label: &'static str, selected: bool, handler: fn()) -> Node {
     let button = ui! {
         <button class="toggle-button" type="button" onclick={handler}>
-            <span class="button-fill"></span>
-            <span class="toggle-state">{if selected { "ON" } else { "OFF" }}</span>
+            <span class="toggle-track">
+                <span class="toggle-knob"></span>
+                <span class="toggle-state">{if selected { "ON" } else { "OFF" }}</span>
+            </span>
             <span class="toggle-label">{label}</span>
         </button>
     };
@@ -1062,6 +1086,146 @@ fn add_class(node: Node, class_name: &'static str) -> Node {
         Node::Element(element) => element.with_class(class_name).into(),
         Node::Text(_) => node,
     }
+}
+
+fn tool_button_class(id: ToolId) -> &'static str {
+    match id {
+        ToolId::FolderPageCounter => "tool-button tool-folder",
+        ToolId::UsbSafeEject => "tool-button tool-usb",
+        ToolId::PdfJoiner => "tool-button tool-pdf",
+    }
+}
+
+fn tool_icon(id: ToolId) -> Node {
+    let mut tile = Node::element("span")
+        .with_class("tool-icon")
+        .with_class(match id {
+            ToolId::FolderPageCounter => "folder",
+            ToolId::UsbSafeEject => "usb",
+            ToolId::PdfJoiner => "pdf",
+        })
+        .with_child(match id {
+            ToolId::FolderPageCounter => icon_folder(),
+            ToolId::UsbSafeEject => icon_usb(),
+            ToolId::PdfJoiner => icon_document(),
+        });
+
+    if id == ToolId::PdfJoiner {
+        tile = tile.with_child(
+            Node::element("span")
+                .with_class("pdf-badge")
+                .with_child(Node::text("PDF"))
+                .into(),
+        );
+    }
+
+    tile.into()
+}
+
+fn icon_document() -> Node {
+    svg_icon(
+        "icon-document",
+        &[
+            "M7 3 L15 3 L19 7 L19 21 L7 21 L7 3 Z",
+            "M15 3 L15 7 L19 7",
+            "M10 12 L16 12",
+            "M10 16 L15 16",
+            "M10 8 L12 8",
+        ],
+        &[],
+    )
+}
+
+fn icon_folder() -> Node {
+    svg_icon(
+        "icon-folder",
+        &[
+            "M3 7 L9 7 L11 9 L21 9 L21 19 L3 19 Z",
+            "M3 7 L3 19",
+        ],
+        &[],
+    )
+}
+
+fn icon_usb() -> Node {
+    svg_icon(
+        "icon-usb",
+        &[
+            "M12 3 L12 15",
+            "M8 7 L12 3 L16 7",
+            "M6 11 L18 11",
+            "M8 11 L8 16 L12 20 L16 16 L16 11",
+        ],
+        &[],
+    )
+}
+
+fn icon_launch() -> Node {
+    svg_icon(
+        "icon-launch",
+        &["M5 19 L19 5", "M10 5 L19 5 L19 14"],
+        &[],
+    )
+}
+
+fn icon_sliders() -> Node {
+    svg_icon(
+        "icon-sliders",
+        &["M4 7 L20 7", "M4 17 L20 17"],
+        &[("9", "7", "2"), ("15", "17", "2")],
+    )
+}
+
+fn icon_exit() -> Node {
+    svg_icon(
+        "icon-exit",
+        &[
+            "M10 7 L15 12 L10 17",
+            "M15 12 L3 12",
+            "M21 5 L21 19 L17 19",
+        ],
+        &[],
+    )
+}
+
+fn icon_chevron() -> Node {
+    svg_icon("icon-chevron", &["M9 6 L15 12 L9 18"], &[])
+}
+
+fn icon_history() -> Node {
+    svg_icon(
+        "icon-history",
+        &["M12 6 L12 12 L16 14", "M7 8 L4 8 L4 5"],
+        &[("12", "12", "8")],
+    )
+}
+
+fn svg_icon(
+    class_name: &'static str,
+    paths: &[&'static str],
+    circles: &[(&'static str, &'static str, &'static str)],
+) -> Node {
+    let mut svg = Node::element("svg")
+        .with_class("svg-icon")
+        .with_class(class_name)
+        .with_attribute("xmlns", "http://www.w3.org/2000/svg")
+        .with_attribute("viewBox", "0 0 24 24");
+
+    for path in paths {
+        svg = svg.with_child(Node::element("path").with_attribute("d", *path).into());
+    }
+
+    for (cx, cy, r) in circles {
+        svg = svg.with_child(
+            Node::element("circle")
+                .with_attribute("cx", *cx)
+                .with_attribute("cy", *cy)
+                .with_attribute("r", *r)
+                .into(),
+        );
+    }
+
+    svg.into()
 }
 
 fn result_panel_class(level: ResultLevel) -> &'static str {
