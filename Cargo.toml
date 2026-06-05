@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+cssimpler = { path = "../cssimpler" }
+cssimpler-core = { path = "../cssimpler/core", package = "cssimpler-core" }
 flate2 = "1.1.9"
-iced = { version = "0.14.0", features = ["tiny-skia", "thread-pool"] }
 lopdf = "0.40.0"
 rfd = "0.15.4"
 windows = { version = "0.61.3", features = [

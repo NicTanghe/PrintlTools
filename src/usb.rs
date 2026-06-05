@@ -185,7 +185,7 @@ mod platform {
         let (resources, resource_scan_limited, mut notes) =
             collect_restart_manager_resources(&root);
         let mut restart_manager_processes = Vec::new();
-        let admin_required = false;
+        let mut admin_required = false;
 
         match close_restart_manager_locks(&resources) {
             Ok(actions) => restart_manager_processes = actions,
@@ -196,9 +196,10 @@ mod platform {
                 });
             }
             Err(RestartManagerError::AccessDenied(error)) => {
+                admin_required = true;
                 notes.push(error);
                 notes.push(
-                    "Restart Manager could not inspect protected locking processes even in the elevated helper; continuing with Explorer window cleanup and direct eject."
+                    "Restart Manager could not inspect protected locking processes even in the elevated helper."
                         .to_string(),
                 );
             }
@@ -230,15 +231,75 @@ mod platform {
             }
         };
 
-        let eject_result = request_shell_eject(&root);
-        let ejected = eject_result.is_ok();
+        let process_cleanup_failed = process_scan_actions
+            .iter()
+            .any(|action| action.action.starts_with("failed"));
+        if process_cleanup_failed {
+            notes.push(
+                "Eject was not requested because one or more matched processes could not be closed."
+                    .to_string(),
+            );
+        }
+
+        let lock_check_failed = match inspect_restart_manager_locks(&resources) {
+            Ok(remaining_locks) => {
+                let has_locks = !remaining_locks.is_empty();
+                if has_locks {
+                    merge_process_actions(&mut restart_manager_processes, remaining_locks);
+                    notes.push(
+                        "Eject was not requested because Restart Manager still reports processes locking the drive."
+                            .to_string(),
+                    );
+                }
+                false
+            }
+            Err(RestartManagerError::AccessDenied(error)) if allow_elevation => {
+                return run_elevated_helper(&drive, &root).map(|mut summary| {
+                    summary.drive = drive;
+                    summary
+                });
+            }
+            Err(RestartManagerError::AccessDenied(error)) => {
+                admin_required = true;
+                notes.push(error);
+                notes.push(
+                    "Eject was not requested because remaining drive locks could not be inspected."
+                        .to_string(),
+                );
+                true
+            }
+            Err(RestartManagerError::Other(error)) => {
+                notes.push(format!("Final lock check failed: {error}"));
+                notes.push(
+                    "Eject was not requested because remaining drive locks could not be verified."
+                        .to_string(),
+                );
+                true
+            }
+        };
+
+        let has_remaining_locks = restart_manager_processes
+            .iter()
+            .any(|action| action.action == "still locking after cleanup");
+        let can_request_eject = !admin_required
+            && !process_cleanup_failed
+            && !lock_check_failed
+            && !has_remaining_locks;
+
+        let eject_result = if can_request_eject {
+            Some(request_shell_eject(&root))
+        } else {
+            None
+        };
+        let ejected = eject_result.as_ref().is_some_and(Result::is_ok);
         let mut eject_method = EjectMethod::None;
         match eject_result {
-            Ok(outcome) => {
+            Some(Ok(outcome)) => {
                 eject_method = outcome.method;
                 notes.push(outcome.note);
             }
-            Err(error) => notes.push(error),
+            Some(Err(error)) => notes.push(error),
+            None => {}
         }
 
         Ok(UsbEjectSummary {
@@ -413,6 +474,35 @@ mod platform {
                 action: action.to_string(),
             })
             .collect()
+    }
+
+    fn inspect_restart_manager_locks(
+        resources: &[PathBuf],
+    ) -> Result<Vec<ProcessAction>, RestartManagerError> {
+        let session = RmSession::new()?;
+        session.register_resources(resources)?;
+        let locks = session.processes()?;
+
+        Ok(process_actions_from_rm(
+            &locks,
+            "still locking after cleanup",
+        ))
+    }
+
+    fn merge_process_actions(target: &mut Vec<ProcessAction>, additions: Vec<ProcessAction>) {
+        for addition in additions {
+            if let Some(existing) = target.iter_mut().find(|action| action.pid == addition.pid) {
+                if existing.name.is_empty() {
+                    existing.name = addition.name;
+                }
+                if existing.path.is_none() {
+                    existing.path = addition.path;
+                }
+                existing.action = addition.action;
+            } else {
+                target.push(addition);
+            }
+        }
     }
 
     struct RmSession {
@@ -657,13 +747,7 @@ if ($null -ne $verb) {{
 }}
 Start-Sleep -Seconds 3
 if (Test-Path -LiteralPath $root) {{
-    $mountvol = Join-Path $env:SystemRoot 'System32\mountvol.exe'
-    & $mountvol $root /p | Out-Null
-    Start-Sleep -Seconds 2
-    if (Test-Path -LiteralPath $root) {{
-        throw "Windows still reports $root as mounted after Shell eject and mountvol /p."
-    }}
-    Write-Output "Shell eject did not unmount the drive; mountvol /p dismounted it."
+    throw "Windows still reports $root as mounted after the Shell eject request."
 }} else {{
     Write-Output 'Shell eject completed and the drive is no longer mounted.'
 }}
@@ -680,11 +764,7 @@ if (Test-Path -LiteralPath $root) {{
             .find(|line| !line.is_empty())
             .unwrap_or("Eject request completed.")
             .to_string();
-        let method = if note.contains("mountvol /p") {
-            EjectMethod::Mountvol
-        } else {
-            EjectMethod::Shell
-        };
+        let method = EjectMethod::Shell;
 
         Ok(EjectOutcome { method, note })
     }

@@ -11,7 +11,7 @@ Product principles
 - Tray-first: the app normally runs in the notification area, not as a full desktop window.
 - Tool launcher: each feature is a separate tool with its own focused prompt flow.
 - PowerToys-like: simple launcher surface, clear icons, optional settings, and predictable Windows behavior.
-- Iced UI: app windows and launcher surfaces are built with Iced.
+- cssimpler UI: app windows and launcher surfaces are built with cssimpler.
 - Local-first: files are processed on the machine unless a future tool explicitly needs an external service.
 - Safe by default: never delete source files, never overwrite output without a standard Windows save confirmation, and show clear results after any automatic process shutdown.
 
@@ -24,7 +24,7 @@ Decisions
 - Folder page counting does not include subfolders by default.
 - Folder page counting includes a checkbox to include subfolders for that run.
 - USB safe eject automatically closes processes that are using the selected drive.
-- UI shell uses Iced.
+- UI shell uses cssimpler.
 
 Open questions
 
@@ -39,7 +39,7 @@ A1. Desktop app baseline
 Depends: -
 Status: done
 
-Create a Windows desktop app entrypoint for PrintLTools using Iced for the visible UI.
+Create a Windows desktop app entrypoint for PrintLTools using cssimpler for the visible UI.
 
 Acceptance
 
@@ -49,7 +49,7 @@ App can run continuously without opening a large main window.
 
 App name, version, and basic metadata are defined in one place.
 
-Iced is the UI framework for app windows and launcher surfaces.
+cssimpler is the UI framework for app windows and launcher surfaces, sourced from the acrylic branch.
 
 A2. Tray lifecycle
 
@@ -557,7 +557,7 @@ Constraints
 
 - Windows first.
 - Tray resident.
-- Iced for app windows and launcher UI.
+- cssimpler for app windows and launcher UI.
 - No Excel/spreadsheet support in the starter tool set.
 - Native file/folder/save dialogs.
 - Source files must not be modified by counting or merging tools.

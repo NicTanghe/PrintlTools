@@ -1,8 +1,14 @@
+use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
+use std::time::Duration;
 
-use iced::futures::channel::oneshot;
-use iced::widget::{button, checkbox, column, container, row, scrollable, text};
-use iced::{Element, Fill, Subscription, Task, Theme, window};
+use cssimpler::app::{App, Invalidation};
+use cssimpler::core::{Color, ElementInteractionState, Node, RenderNode};
+use cssimpler::renderer::{FrameInfo, RedrawSchedule, SceneProvider, ViewportSize, WindowConfig};
+use cssimpler::style::{Stylesheet, parse_stylesheet};
+use cssimpler::ui;
 
 use crate::dialogs;
 use crate::page_counter::{self, PageCounterOptions};
@@ -11,6 +17,8 @@ use crate::registry::{self, ToolDefinition, ToolId, ToolStatus};
 use crate::results::{ResultLevel, ToolResult, display_path, display_paths};
 use crate::tray::{self, TrayEvent};
 use crate::usb::{self, DriveInfo};
+
+const MAX_USB_DRIVE_BUTTONS: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -24,12 +32,11 @@ enum View {
 
 #[derive(Debug, Clone)]
 struct PageCounterPrompt {
-    folder: std::path::PathBuf,
+    folder: PathBuf,
     include_subfolders: bool,
 }
 
-#[derive(Debug)]
-pub struct PrintLTools {
+struct PrintLTools {
     view: View,
     include_subfolders: bool,
     remember_last_folders: bool,
@@ -39,58 +46,111 @@ pub struct PrintLTools {
     processing_title: Option<String>,
     processing_detail: Option<String>,
     usb_drives: Vec<DriveInfo>,
-    last_window: Option<window::Id>,
     last_result: Option<ToolResult>,
+    background_sender: Sender<Message>,
+    background_receiver: Receiver<Message>,
+    tray_events: Option<Receiver<TrayEvent>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Message {
-    WindowOpened(window::Id),
-    WindowCloseRequested(window::Id),
+enum Message {
     Tray(TrayEvent),
     OpenLauncher,
     OpenSettings,
     Exit,
     ToolPressed(ToolId),
-    FolderPicked(Option<std::path::PathBuf>),
-    PdfFilesPicked(Option<Vec<std::path::PathBuf>>),
+    FolderPicked(Option<PathBuf>),
+    PdfFilesPicked(Option<Vec<PathBuf>>),
     PdfOutputPicked {
-        files: Vec<std::path::PathBuf>,
-        output: Option<std::path::PathBuf>,
+        files: Vec<PathBuf>,
+        output: Option<PathBuf>,
     },
     PdfMergeFinished(ToolResult),
     UsbDrivesLoaded(Result<Vec<DriveInfo>, String>),
-    UsbDriveSelected(DriveInfo),
+    UsbDriveSelected(usize),
     UsbEjectFinished(ToolResult),
-    IncludeSubfoldersChanged(bool),
+    ToggleIncludeSubfolders,
     PowerPointSlidesPerPageChanged(u32),
     RunPendingPageCounter,
     PageCounterFinished(ToolResult),
     CancelPendingTool,
-    RememberLastFoldersChanged(bool),
-    OpenOnTrayClickChanged(bool),
+    ToggleRememberLastFolders,
+    ToggleOpenOnTrayClick,
     DismissResult,
 }
 
-pub fn run() -> iced::Result {
-    iced::application(PrintLTools::default, update, view)
-        .title("PrintLTools")
-        .theme(theme)
-        .window_size((520.0, 620.0))
-        .resizable(true)
-        .centered()
-        .exit_on_close_request(false)
-        .subscription(subscription)
-        .run()
+#[derive(Debug, Clone)]
+enum UiCommand {
+    OpenLauncher,
+    OpenSettings,
+    Exit,
+    ToolPressed(ToolId),
+    UsbDriveSelected(usize),
+    ToggleIncludeSubfolders,
+    PowerPointSlidesPerPageChanged(u32),
+    RunPendingPageCounter,
+    CancelPendingTool,
+    ToggleRememberLastFolders,
+    ToggleOpenOnTrayClick,
+    DismissResult,
 }
 
-fn theme(_state: &PrintLTools) -> Theme {
-    Theme::Light
+static UI_COMMANDS: OnceLock<Mutex<Vec<UiCommand>>> = OnceLock::new();
+
+pub fn run() -> cssimpler::renderer::Result<()> {
+    let app = PollingSceneProvider {
+        inner: App::new(PrintLTools::new(), stylesheet(), update, view),
+    };
+
+    cssimpler::renderer::run_with_scene_provider(
+        WindowConfig {
+            clear_color: Color::rgb(54, 67, 78),
+            frame_time: Duration::from_millis(120),
+            ..WindowConfig::new("PrintLTools", 620, 680)
+                .with_glass_capable(true)
+                .with_decorations(false)
+        },
+        app,
+    )
 }
 
-impl Default for PrintLTools {
-    fn default() -> Self {
-        Self {
+struct PollingSceneProvider<P> {
+    inner: P,
+}
+
+impl<P> SceneProvider for PollingSceneProvider<P>
+where
+    P: SceneProvider,
+{
+    fn update(&mut self, frame: FrameInfo) {
+        self.inner.update(frame);
+    }
+
+    fn scene(&self) -> &[RenderNode] {
+        self.inner.scene()
+    }
+
+    fn set_viewport(&mut self, viewport: ViewportSize) {
+        self.inner.set_viewport(viewport);
+    }
+
+    fn set_element_interaction(&mut self, interaction: ElementInteractionState) -> bool {
+        self.inner.set_element_interaction(interaction)
+    }
+
+    fn redraw_schedule(&self) -> RedrawSchedule {
+        RedrawSchedule::EveryFrame
+    }
+
+    fn needs_redraw(&self) -> bool {
+        self.inner.needs_redraw()
+    }
+}
+
+impl PrintLTools {
+    fn new() -> Self {
+        let (background_sender, background_receiver) = mpsc::channel();
+        let mut state = Self {
             view: View::Launcher,
             include_subfolders: false,
             remember_last_folders: true,
@@ -100,40 +160,88 @@ impl Default for PrintLTools {
             processing_title: None,
             processing_detail: None,
             usb_drives: Vec::new(),
-            last_window: None,
             last_result: None,
+            background_sender,
+            background_receiver,
+            tray_events: None,
+        };
+
+        match tray::spawn_events() {
+            Ok(receiver) => state.tray_events = Some(receiver),
+            Err(error) => {
+                state.last_result = Some(ToolResult::warning(
+                    "Tray integration",
+                    "The app started, but the Windows tray icon could not be initialized.",
+                    vec![error],
+                ));
+                state.view = View::Result;
+            }
+        }
+
+        state
+    }
+}
+
+impl From<UiCommand> for Message {
+    fn from(value: UiCommand) -> Self {
+        match value {
+            UiCommand::OpenLauncher => Self::OpenLauncher,
+            UiCommand::OpenSettings => Self::OpenSettings,
+            UiCommand::Exit => Self::Exit,
+            UiCommand::ToolPressed(id) => Self::ToolPressed(id),
+            UiCommand::UsbDriveSelected(index) => Self::UsbDriveSelected(index),
+            UiCommand::ToggleIncludeSubfolders => Self::ToggleIncludeSubfolders,
+            UiCommand::PowerPointSlidesPerPageChanged(value) => {
+                Self::PowerPointSlidesPerPageChanged(value)
+            }
+            UiCommand::RunPendingPageCounter => Self::RunPendingPageCounter,
+            UiCommand::CancelPendingTool => Self::CancelPendingTool,
+            UiCommand::ToggleRememberLastFolders => Self::ToggleRememberLastFolders,
+            UiCommand::ToggleOpenOnTrayClick => Self::ToggleOpenOnTrayClick,
+            UiCommand::DismissResult => Self::DismissResult,
         }
     }
 }
 
-fn subscription(_state: &PrintLTools) -> Subscription<Message> {
-    Subscription::batch([
-        window::open_events().map(Message::WindowOpened),
-        window::close_requests().map(Message::WindowCloseRequested),
-        tray::subscription().map(Message::Tray),
-    ])
+fn update(state: &mut PrintLTools, _frame: FrameInfo) -> Invalidation {
+    let mut messages = Vec::new();
+
+    if let Some(receiver) = &state.tray_events {
+        while let Ok(event) = receiver.try_recv() {
+            messages.push(Message::Tray(event));
+        }
+    }
+
+    while let Ok(message) = state.background_receiver.try_recv() {
+        messages.push(message);
+    }
+
+    messages.extend(take_ui_commands().into_iter().map(Message::from));
+
+    let mut changed = false;
+    for message in messages {
+        changed |= handle_message(state, message);
+    }
+
+    if changed {
+        Invalidation::Layout
+    } else {
+        Invalidation::Clean
+    }
 }
 
-fn update(state: &mut PrintLTools, message: Message) -> Task<Message> {
+fn handle_message(state: &mut PrintLTools, message: Message) -> bool {
     match message {
-        Message::WindowOpened(id) => {
-            state.last_window = Some(id);
-            Task::none()
-        }
-        Message::WindowCloseRequested(id) => {
-            state.last_window = Some(id);
-            window::set_mode(id, window::Mode::Hidden)
-        }
         Message::Tray(event) => handle_tray_event(state, event),
         Message::OpenLauncher => {
             state.view = View::Launcher;
-            show_launcher(state)
+            true
         }
         Message::OpenSettings => {
             state.view = View::Settings;
-            show_launcher(state)
+            true
         }
-        Message::Exit => quit(state),
+        Message::Exit => quit(),
         Message::ToolPressed(id) => start_tool(state, id),
         Message::FolderPicked(folder) => handle_folder_picked(state, folder),
         Message::PdfFilesPicked(files) => handle_pdf_files_picked(state, files),
@@ -142,38 +250,30 @@ fn update(state: &mut PrintLTools, message: Message) -> Task<Message> {
         }
         Message::PdfMergeFinished(result) => record_result(state, result),
         Message::UsbDrivesLoaded(result) => handle_usb_drives_loaded(state, result),
-        Message::UsbDriveSelected(drive) => handle_usb_drive_selected(state, drive),
+        Message::UsbDriveSelected(index) => {
+            let Some(drive) = state.usb_drives.get(index).cloned() else {
+                return record_result(
+                    state,
+                    ToolResult::warning(
+                        "USB safe eject",
+                        "The selected drive is no longer available.",
+                        Vec::new(),
+                    ),
+                );
+            };
+
+            handle_usb_drive_selected(state, drive)
+        }
         Message::UsbEjectFinished(result) => record_result(state, result),
-        Message::IncludeSubfoldersChanged(value) => {
-            state.include_subfolders = value;
-            Task::none()
+        Message::ToggleIncludeSubfolders => {
+            state.include_subfolders = !state.include_subfolders;
+            true
         }
         Message::PowerPointSlidesPerPageChanged(value) => {
             state.powerpoint_slides_per_page = value;
-            Task::none()
+            true
         }
-        Message::RunPendingPageCounter => {
-            let Some(prompt) = state.page_counter_prompt.clone() else {
-                return Task::none();
-            };
-
-            let options = PageCounterOptions {
-                folder: prompt.folder,
-                include_subfolders: prompt.include_subfolders,
-                powerpoint_slides_per_page: state.powerpoint_slides_per_page,
-            };
-
-            state.page_counter_prompt = None;
-            state.processing_title = Some("Counting pages".to_string());
-            state.processing_detail =
-                Some("Counting PDF and document pages in the selected folder.".to_string());
-            state.view = View::Processing;
-
-            Task::perform(
-                run_result_on_thread(move || run_page_counter(options)),
-                Message::PageCounterFinished,
-            )
-        }
+        Message::RunPendingPageCounter => run_pending_page_counter(state),
         Message::PageCounterFinished(result) => record_result(state, result),
         Message::CancelPendingTool => {
             state.page_counter_prompt = None;
@@ -181,102 +281,87 @@ fn update(state: &mut PrintLTools, message: Message) -> Task<Message> {
             state.processing_detail = None;
             state.usb_drives.clear();
             state.view = View::Launcher;
-            Task::none()
+            true
         }
-        Message::RememberLastFoldersChanged(value) => {
-            state.remember_last_folders = value;
-            Task::none()
+        Message::ToggleRememberLastFolders => {
+            state.remember_last_folders = !state.remember_last_folders;
+            true
         }
-        Message::OpenOnTrayClickChanged(value) => {
-            state.open_launcher_on_tray_click = value;
-            Task::none()
+        Message::ToggleOpenOnTrayClick => {
+            state.open_launcher_on_tray_click = !state.open_launcher_on_tray_click;
+            true
         }
         Message::DismissResult => {
             state.last_result = None;
             state.view = View::Launcher;
-            Task::none()
+            true
         }
     }
 }
 
-fn handle_tray_event(state: &mut PrintLTools, event: TrayEvent) -> Task<Message> {
+fn handle_tray_event(state: &mut PrintLTools, event: TrayEvent) -> bool {
     match event {
         TrayEvent::OpenLauncher => {
             if state.open_launcher_on_tray_click {
                 state.view = View::Launcher;
-                show_launcher(state)
+                true
             } else {
-                Task::none()
+                false
             }
         }
         TrayEvent::OpenSettings => {
             state.view = View::Settings;
-            show_launcher(state)
+            true
         }
-        TrayEvent::Exit => quit(state),
-        TrayEvent::Error(error) => {
-            let result = ToolResult::error(
+        TrayEvent::Exit => quit(),
+        TrayEvent::Error(error) => record_result(
+            state,
+            ToolResult::error(
                 "Tray integration",
                 "The app is running, but the Windows tray icon could not be initialized.",
                 vec![error],
-            );
-            record_result(state, result)
-        }
-    }
-}
-
-fn quit(state: &PrintLTools) -> Task<Message> {
-    tray::shutdown();
-
-    if let Some(id) = state.last_window {
-        window::close(id)
-    } else {
-        std::process::exit(0);
-    }
-}
-
-fn show_launcher(state: &PrintLTools) -> Task<Message> {
-    if let Some(id) = state.last_window {
-        Task::batch([
-            window::set_mode(id, window::Mode::Windowed),
-            window::gain_focus(id),
-        ])
-    } else {
-        Task::none()
-    }
-}
-
-fn start_tool(state: &mut PrintLTools, id: ToolId) -> Task<Message> {
-    match id {
-        ToolId::FolderPageCounter => Task::perform(
-            dialogs::pick_folder_threaded("Select folder for page counting"),
-            Message::FolderPicked,
+            ),
         ),
+    }
+}
+
+fn quit() -> bool {
+    tray::shutdown();
+    std::process::exit(0);
+}
+
+fn start_tool(state: &mut PrintLTools, id: ToolId) -> bool {
+    match id {
+        ToolId::FolderPageCounter => spawn_or_record(state, "printltools-dialog", |sender| {
+            move || {
+                let folder = dialogs::pick_folder("Select folder for page counting");
+                let _ = sender.send(Message::FolderPicked(folder));
+            }
+        }),
         ToolId::UsbSafeEject => {
             state.processing_title = Some("Loading drives".to_string());
             state.processing_detail = Some("Scanning removable and external drives.".to_string());
             state.view = View::Processing;
 
-            Task::perform(
-                async {
-                    run_on_worker_thread(usb::list_drives)
-                        .await
-                        .unwrap_or_else(Err)
-                },
-                Message::UsbDrivesLoaded,
-            )
+            spawn_or_record(state, "printltools-worker", |sender| {
+                move || {
+                    let result = usb::list_drives();
+                    let _ = sender.send(Message::UsbDrivesLoaded(result));
+                }
+            });
+
+            true
         }
-        ToolId::PdfJoiner => Task::perform(
-            dialogs::pick_pdf_files_threaded("Select PDF files to join"),
-            Message::PdfFilesPicked,
-        ),
+        ToolId::PdfJoiner => spawn_or_record(state, "printltools-dialog", |sender| {
+            move || {
+                let files = dialogs::pick_pdf_files("Select PDF files to join");
+                let _ = sender.send(Message::PdfFilesPicked(files));
+            }
+        }),
     }
 }
 
-fn handle_folder_picked(
-    state: &mut PrintLTools,
-    folder: Option<std::path::PathBuf>,
-) -> Task<Message> {
+fn handle_folder_picked(state: &mut PrintLTools, folder: Option<PathBuf>) -> bool {
     let Some(folder) = folder else {
         return record_result(
             state,
@@ -293,14 +378,10 @@ fn handle_folder_picked(
         include_subfolders: state.include_subfolders,
     });
     state.view = View::PageCounterPrompt;
-
-    Task::none()
+    true
 }
 
-fn handle_pdf_files_picked(
-    state: &mut PrintLTools,
-    files: Option<Vec<std::path::PathBuf>>,
-) -> Task<Message> {
+fn handle_pdf_files_picked(state: &mut PrintLTools, files: Option<Vec<PathBuf>>) -> bool {
     let Some(files) = files else {
         return record_result(
             state,
@@ -315,39 +396,44 @@ fn handle_pdf_files_picked(
         );
     }
 
-    Task::perform(
-        dialogs::save_pdf_file_threaded("Save joined PDF as", "joined.pdf"),
-        move |output| Message::PdfOutputPicked { files, output },
-    )
+    spawn_or_record(state, "printltools-dialog", |sender| {
+        move || {
+            let output = dialogs::save_pdf_file("Save joined PDF as", "joined.pdf");
+            let _ = sender.send(Message::PdfOutputPicked { files, output });
+        }
+    })
 }
 
 fn handle_pdf_output_picked(
     state: &mut PrintLTools,
-    files: Vec<std::path::PathBuf>,
-    output: Option<std::path::PathBuf>,
-) -> Task<Message> {
+    files: Vec<PathBuf>,
+    output: Option<PathBuf>,
+) -> bool {
     let Some(output) = output else {
-        return Task::done(Message::PdfMergeFinished(ToolResult::info(
-            "PDF joiner",
-            "Output selection was canceled.",
-            Vec::new(),
-        )));
+        return record_result(
+            state,
+            ToolResult::info("PDF joiner", "Output selection was canceled.", Vec::new()),
+        );
     };
 
     state.processing_title = Some("Joining PDFs".to_string());
     state.processing_detail = Some(format!("Merging {} selected PDF files.", files.len()));
     state.view = View::Processing;
 
-    Task::perform(
-        run_result_on_thread(move || merge_pdfs_result(files, output)),
-        Message::PdfMergeFinished,
-    )
+    spawn_or_record(state, "printltools-worker", |sender| {
+        move || {
+            let result = merge_pdfs_result(files, output);
+            let _ = sender.send(Message::PdfMergeFinished(result));
+        }
+    });
+
+    true
 }
 
 fn handle_usb_drives_loaded(
     state: &mut PrintLTools,
     result: Result<Vec<DriveInfo>, String>,
-) -> Task<Message> {
+) -> bool {
     match result {
         Ok(drives) if drives.is_empty() => record_result(
             state,
@@ -362,7 +448,7 @@ fn handle_usb_drives_loaded(
             state.processing_title = None;
             state.processing_detail = None;
             state.view = View::UsbDriveSelect;
-            Task::none()
+            true
         }
         Err(error) => record_result(
             state,
@@ -375,18 +461,69 @@ fn handle_usb_drives_loaded(
     }
 }
 
-fn handle_usb_drive_selected(state: &mut PrintLTools, drive: DriveInfo) -> Task<Message> {
+fn handle_usb_drive_selected(state: &mut PrintLTools, drive: DriveInfo) -> bool {
     state.processing_title = Some("Preparing USB eject".to_string());
     state.processing_detail = Some(format!("Closing processes and ejecting {}.", drive.letter));
     state.view = View::Processing;
 
-    Task::perform(
-        run_result_on_thread(move || usb_eject_result(drive)),
-        Message::UsbEjectFinished,
-    )
+    spawn_or_record(state, "printltools-worker", |sender| {
+        move || {
+            let result = usb_eject_result(drive);
+            let _ = sender.send(Message::UsbEjectFinished(result));
+        }
+    });
+
+    true
 }
 
-fn merge_pdfs_result(files: Vec<std::path::PathBuf>, output: std::path::PathBuf) -> ToolResult {
+fn run_pending_page_counter(state: &mut PrintLTools) -> bool {
+    let Some(prompt) = state.page_counter_prompt.clone() else {
+        return false;
+    };
+
+    let options = PageCounterOptions {
+        folder: prompt.folder,
+        include_subfolders: prompt.include_subfolders,
+        powerpoint_slides_per_page: state.powerpoint_slides_per_page,
+    };
+
+    state.page_counter_prompt = None;
+    state.processing_title = Some("Counting pages".to_string());
+    state.processing_detail =
+        Some("Counting PDF and document pages in the selected folder.".to_string());
+    state.view = View::Processing;
+
+    spawn_or_record(state, "printltools-worker", |sender| {
+        move || {
+            let result = run_page_counter(options);
+            let _ = sender.send(Message::PageCounterFinished(result));
+        }
+    });
+
+    true
+}
+
+fn spawn_or_record<F, G>(state: &mut PrintLTools, name: &'static str, build: F) -> bool
+where
+    F: FnOnce(Sender<Message>) -> G,
+    G: FnOnce() + Send + 'static,
+{
+    let sender = state.background_sender.clone();
+    let task = build(sender);
+    match thread::Builder::new().name(name.to_string()).spawn(task) {
+        Ok(_) => false,
+        Err(error) => record_result(
+            state,
+            ToolResult::error(
+                "Background task",
+                "The operation could not start.",
+                vec![format!("Error: {error}")],
+            ),
+        ),
+    }
+}
+
+fn merge_pdfs_result(files: Vec<PathBuf>, output: PathBuf) -> ToolResult {
     let mut details = vec![
         format!("Output: {}", display_path(&output)),
         format!("Input files: {}", files.len()),
@@ -566,54 +703,16 @@ fn run_page_counter(options: PageCounterOptions) -> ToolResult {
     }
 }
 
-fn record_result(state: &mut PrintLTools, result: ToolResult) -> Task<Message> {
+fn record_result(state: &mut PrintLTools, result: ToolResult) -> bool {
     state.last_result = Some(result);
     state.processing_title = None;
     state.processing_detail = None;
     state.usb_drives.clear();
     state.view = View::Result;
-
-    show_launcher(state)
+    true
 }
 
-async fn run_result_on_thread(f: impl FnOnce() -> ToolResult + Send + 'static) -> ToolResult {
-    run_on_worker_thread(f).await.unwrap_or_else(|error| {
-        ToolResult::error(
-            "Background task",
-            "The operation stopped before returning a result.",
-            vec![error],
-        )
-    })
-}
-
-async fn run_on_worker_thread<T>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, String>
-where
-    T: Send + 'static,
-{
-    let (sender, receiver) = oneshot::channel();
-
-    let _ = thread::Builder::new()
-        .name("printltools-worker".to_string())
-        .spawn(move || {
-            let _ = sender.send(f());
-        })
-        .map_err(|error| error.to_string())?;
-
-    receiver
-        .await
-        .map_err(|_| "Worker thread stopped before returning a result.".to_string())
-}
-
-fn view(state: &PrintLTools) -> Element<'_, Message> {
-    let header = row![
-        text("PrintLTools").size(30),
-        button("Launcher").on_press(Message::OpenLauncher),
-        button("Settings").on_press(Message::OpenSettings),
-        button("Quit").on_press(Message::Exit),
-    ]
-    .spacing(10)
-    .align_y(iced::Alignment::Center);
-
+fn view(state: &PrintLTools) -> Node {
     let body = match state.view {
         View::Launcher => launcher_view(state),
         View::Settings => settings_view(state),
@@ -623,224 +722,573 @@ fn view(state: &PrintLTools) -> Element<'_, Message> {
         View::Result => result_view(state),
     };
 
-    container(column![header, body].spacing(18))
-        .padding(20)
-        .width(Fill)
-        .height(Fill)
-        .into()
+    ui! {
+        <div id="app">
+            <div class="glass-layer"></div>
+            <section class="shell">
+                <header class="topbar">
+                    <div class="brand">
+                        <h1>PrintLTools</h1>
+                        <p>Print and file utilities</p>
+                    </div>
+                    <div class="top-actions">
+                        {nav_button("Launcher", command_open_launcher, state.view == View::Launcher)}
+                        {nav_button("Settings", command_open_settings, state.view == View::Settings)}
+                        {add_class(action_button("Quit", command_exit), "danger")}
+                    </div>
+                </header>
+                <main class="content">
+                    {body}
+                </main>
+            </section>
+        </div>
+    }
 }
 
-fn launcher_view(state: &PrintLTools) -> Element<'_, Message> {
-    let mut tools = column![].spacing(10);
-
+fn launcher_view(state: &PrintLTools) -> Node {
+    let mut tools = Node::element("div").with_class("tool-list");
     for tool in registry::all_tools() {
-        tools = tools.push(tool_button(tool));
+        tools = tools.with_child(tool_button(tool));
     }
 
-    let result_panel: Element<'_, Message> = if let Some(result) = &state.last_result {
-        let level = match result.level {
-            ResultLevel::Info => "Info",
-            ResultLevel::Warning => "Warning",
-            ResultLevel::Error => "Error",
-        };
-
-        let mut details = column![
-            text(format!("{}: {}", level, result.title)).size(16),
-            text(&result.summary)
-        ]
-        .spacing(6);
-
-        for detail in &result.details {
-            details = details.push(text(detail).size(13));
-        }
-
-        container(column![details, button("Dismiss").on_press(Message::DismissResult)].spacing(10))
-            .padding(12)
-            .width(Fill)
-            .into()
-    } else {
-        container(text("Select a tool to start."))
-            .padding(12)
-            .into()
-    };
-
-    scrollable(
-        column![
-            text("Tools").size(20),
-            tools,
-            text("Folder options").size(20),
-            checkbox(state.include_subfolders)
-                .label("Include subfolders")
-                .on_toggle(Message::IncludeSubfoldersChanged),
-            text("Latest result").size(20),
-            result_panel,
-        ]
-        .spacing(14),
-    )
-    .into()
+    ui! {
+        <div class="view">
+            <section class="panel">
+                <div class="section-heading">
+                    <h2>Tools</h2>
+                    <p>Choose a utility to start.</p>
+                </div>
+                {Node::from(tools)}
+            </section>
+            <section class="panel">
+                <div class="section-heading">
+                    <h2>Folder options</h2>
+                    <p>Used by the folder page counter.</p>
+                </div>
+                {toggle_button(
+                    "Include subfolders",
+                    state.include_subfolders,
+                    command_toggle_include_subfolders,
+                )}
+            </section>
+            <section class="panel">
+                <div class="section-heading">
+                    <h2>Latest result</h2>
+                    <p>Most recent completed operation.</p>
+                </div>
+                {latest_result_panel(state.last_result.as_ref())}
+            </section>
+        </div>
+    }
 }
 
-fn settings_view(state: &PrintLTools) -> Element<'_, Message> {
-    column![
-        text("Settings").size(20),
-        checkbox(state.open_launcher_on_tray_click)
-            .label("Open launcher on tray icon click")
-            .on_toggle(Message::OpenOnTrayClickChanged),
-        checkbox(state.remember_last_folders)
-            .label("Remember last folders")
-            .on_toggle(Message::RememberLastFoldersChanged),
-        text("Start with Windows and persisted settings are planned for Epic F."),
-    ]
-    .spacing(14)
-    .into()
+fn settings_view(state: &PrintLTools) -> Node {
+    ui! {
+        <div class="view">
+            <section class="panel">
+                <div class="section-heading">
+                    <h2>Settings</h2>
+                    <p>Local application preferences.</p>
+                </div>
+                <div class="settings-list">
+                    {toggle_button(
+                        "Open launcher on tray icon click",
+                        state.open_launcher_on_tray_click,
+                        command_toggle_open_on_tray_click,
+                    )}
+                    {toggle_button(
+                        "Remember last folders",
+                        state.remember_last_folders,
+                        command_toggle_remember_last_folders,
+                    )}
+                </div>
+                <p class="muted-line">Start with Windows and persisted settings are planned for Epic F.</p>
+            </section>
+        </div>
+    }
 }
 
-fn result_view(state: &PrintLTools) -> Element<'_, Message> {
+fn result_view(state: &PrintLTools) -> Node {
     let Some(result) = &state.last_result else {
-        return container(
-            column![
-                text("No result").size(20),
-                button("Back to launcher").on_press(Message::DismissResult),
-            ]
-            .spacing(14),
-        )
-        .padding(12)
-        .into();
+        return ui! {
+            <div class="view">
+                <section class="panel">
+                    <h2>No result</h2>
+                    {action_button("Back to launcher", command_dismiss_result)}
+                </section>
+            </div>
+        };
     };
 
-    let level = match result.level {
-        ResultLevel::Info => "Info",
-        ResultLevel::Warning => "Warning",
-        ResultLevel::Error => "Error",
-    };
-
-    let mut details = column![
-        text(format!("{}: {}", level, result.title)).size(20),
-        text(&result.summary).size(16),
-    ]
-    .spacing(8);
-
-    for detail in &result.details {
-        details = details.push(text(detail).size(13));
+    ui! {
+        <div class="view">
+            <section class={result_panel_class(result.level)}>
+                <p class="eyebrow">{result_level_label(result.level)}</p>
+                <h2>{&result.title}</h2>
+                <p class="result-summary">{&result.summary}</p>
+                {result_detail_list(result)}
+                <div class="button-row">
+                    {action_button("Back to launcher", command_dismiss_result)}
+                    {action_button("Keep result", command_open_launcher)}
+                </div>
+            </section>
+        </div>
     }
-
-    scrollable(
-        column![
-            details,
-            row![
-                button("Back to launcher").on_press(Message::DismissResult),
-                button("Keep result").on_press(Message::OpenLauncher),
-            ]
-            .spacing(10),
-        ]
-        .spacing(16),
-    )
-    .into()
 }
 
-fn page_counter_prompt_view(state: &PrintLTools) -> Element<'_, Message> {
+fn page_counter_prompt_view(state: &PrintLTools) -> Node {
     let Some(prompt) = &state.page_counter_prompt else {
-        return container(text("No folder selected.")).padding(12).into();
+        return ui! {
+            <div class="view">
+                <section class="panel">
+                    <h2>No folder selected</h2>
+                    {action_button("Back to launcher", command_cancel_pending_tool)}
+                </section>
+            </div>
+        };
     };
 
-    let mut slide_options = row![].spacing(8);
-    for value in [1, 2, 3, 4, 6, 9] {
-        let label = if state.powerpoint_slides_per_page == value {
-            format!("{value} selected")
-        } else {
-            value.to_string()
+    ui! {
+        <div class="view">
+            <section class="panel">
+                <div class="section-heading">
+                    <h2>Folder page counter</h2>
+                    <p>Confirm options before counting pages.</p>
+                </div>
+                <div class="fact-list">
+                    <p>{format!("Folder: {}", display_path(&prompt.folder))}</p>
+                    <p>{format!(
+                        "Include subfolders: {}",
+                        if prompt.include_subfolders { "yes" } else { "no" }
+                    )}</p>
+                </div>
+                <h3>PowerPoint slides per printed page</h3>
+                {slide_options(state.powerpoint_slides_per_page)}
+                <div class="button-row">
+                    {action_button("Count pages", command_run_pending_page_counter)}
+                    {action_button("Cancel", command_cancel_pending_tool)}
+                </div>
+            </section>
+        </div>
+    }
+}
+
+fn usb_drive_select_view(state: &PrintLTools) -> Node {
+    let mut drives = Node::element("div").with_class("drive-list");
+
+    for (index, drive) in state.usb_drives.iter().enumerate() {
+        let Some(handler) = drive_select_handler(index) else {
+            continue;
         };
 
-        slide_options = slide_options
-            .push(button(text(label)).on_press(Message::PowerPointSlidesPerPageChanged(value)));
+        drives = drives.with_child(drive_button(drive, handler));
     }
 
-    column![
-        text("Folder page counter").size(20),
-        text(format!("Folder: {}", display_path(&prompt.folder))),
-        text(format!(
-            "Include subfolders: {}",
-            if prompt.include_subfolders {
-                "yes"
-            } else {
-                "no"
-            }
-        )),
-        text("PowerPoint slides per printed page").size(16),
-        slide_options,
-        row![
-            button("Count pages").on_press(Message::RunPendingPageCounter),
-            button("Cancel").on_press(Message::CancelPendingTool),
-        ]
-        .spacing(10),
-    ]
-    .spacing(14)
-    .into()
-}
-
-fn usb_drive_select_view(state: &PrintLTools) -> Element<'_, Message> {
-    let mut drives = column![].spacing(10);
-
-    for drive in &state.usb_drives {
-        drives = drives.push(
-            button(
-                column![
-                    text(drive.display_name()).size(16),
-                    text(format!("Root: {}", display_path(&drive.root))).size(12),
-                ]
-                .spacing(4),
-            )
-            .width(Fill)
-            .on_press(Message::UsbDriveSelected(drive.clone())),
-        );
+    if state.usb_drives.len() > MAX_USB_DRIVE_BUTTONS {
+        drives = drives.with_child(ui! {
+            <p class="muted-line">
+                Only the first 16 detected drives are shown.
+            </p>
+        });
     }
 
-    scrollable(
-        column![
-            text("USB safe eject").size(20),
-            text("Select the drive to close locking processes and request safe eject."),
-            drives,
-            button("Cancel").on_press(Message::CancelPendingTool),
-        ]
-        .spacing(14),
-    )
-    .into()
+    ui! {
+        <div class="view">
+            <section class="panel">
+                <div class="section-heading">
+                    <h2>USB safe eject</h2>
+                    <p>Select the drive to close locking processes and request safe eject.</p>
+                </div>
+                {Node::from(drives)}
+                <div class="button-row">
+                    {action_button("Cancel", command_cancel_pending_tool)}
+                </div>
+            </section>
+        </div>
+    }
 }
 
-fn processing_view(state: &PrintLTools) -> Element<'_, Message> {
-    column![
-        text(state.processing_title.as_deref().unwrap_or("Processing")).size(20),
-        text(
-            state
-                .processing_detail
-                .as_deref()
-                .unwrap_or("The selected operation is still running.")
-        ),
-        text("You can leave this window open while the background worker finishes."),
-    ]
-    .spacing(14)
-    .into()
+fn processing_view(state: &PrintLTools) -> Node {
+    ui! {
+        <div class="view">
+            <section class="panel processing-panel">
+                <p class="eyebrow">Working</p>
+                <h2>{state.processing_title.as_deref().unwrap_or("Processing")}</h2>
+                <p>{state.processing_detail.as_deref().unwrap_or("The selected operation is still running.")}</p>
+                <p class="muted-line">You can leave this window open while the background worker finishes.</p>
+            </section>
+        </div>
+    }
 }
 
-fn tool_button(tool: &'static ToolDefinition) -> Element<'static, Message> {
+fn tool_button(tool: &'static ToolDefinition) -> Node {
     let status = match tool.status {
         ToolStatus::Ready => "Ready",
         ToolStatus::Planned => "Planned",
     };
 
-    let content = column![
-        text(tool.name).size(18),
-        text(tool.description).size(13),
-        text(format!("{} - {}", tool.short_name, status)).size(12),
-    ]
-    .spacing(4);
-
-    let button = button(container(content).width(Fill))
-        .padding(12)
-        .width(Fill);
-
     match tool.status {
-        ToolStatus::Ready => button.on_press(Message::ToolPressed(tool.id)).into(),
-        ToolStatus::Planned => button.into(),
+        ToolStatus::Ready => ui! {
+            <button class="tool-button" type="button" onclick={tool_handler(tool.id)}>
+                <span class="button-fill"></span>
+                <span class="tool-title">{tool.name}</span>
+                <span class="tool-description">{tool.description}</span>
+                <span class="tool-meta">{format!("{} - {}", tool.short_name, status)}</span>
+            </button>
+        },
+        ToolStatus::Planned => ui! {
+            <button class="tool-button disabled" type="button">
+                <span class="button-fill"></span>
+                <span class="tool-title">{tool.name}</span>
+                <span class="tool-description">{tool.description}</span>
+                <span class="tool-meta">{format!("{} - {}", tool.short_name, status)}</span>
+            </button>
+        },
+    }
+}
+
+fn latest_result_panel(result: Option<&ToolResult>) -> Node {
+    let Some(result) = result else {
+        return ui! {
+            <div class="empty-state">
+                <p>Select a tool to start.</p>
+            </div>
+        };
+    };
+
+    ui! {
+        <div class={result_panel_class(result.level)}>
+            <p class="eyebrow">{result_level_label(result.level)}</p>
+            <h3>{&result.title}</h3>
+            <p>{&result.summary}</p>
+            {action_button("Dismiss", command_dismiss_result)}
+        </div>
+    }
+}
+
+fn result_detail_list(result: &ToolResult) -> Node {
+    if result.details.is_empty() {
+        return ui! {
+            <div class="detail-list">
+                <p class="muted-line">No additional details.</p>
+            </div>
+        };
+    }
+
+    let mut details = Node::element("div").with_class("detail-list");
+    for detail in &result.details {
+        details = details.with_child(ui! {
+            <p class="detail-line">{detail}</p>
+        });
+    }
+    details.into()
+}
+
+fn slide_options(selected: u32) -> Node {
+    let mut options = Node::element("div").with_class("segmented");
+
+    for value in [1_u32, 2, 3, 4, 6, 9] {
+        let label = value.to_string();
+        let handler = slide_handler(value);
+        let mut button = ui! {
+            <button class="segment-button" type="button" onclick={handler}>
+                <span class="button-fill"></span>
+                <span class="button-text">{label}</span>
+            </button>
+        };
+
+        if selected == value {
+            button = add_class(button, "selected");
+        }
+
+        options = options.with_child(button);
+    }
+
+    options.into()
+}
+
+fn drive_button(drive: &DriveInfo, handler: fn()) -> Node {
+    ui! {
+        <button class="drive-button" type="button" onclick={handler}>
+            <span class="button-fill"></span>
+            <span class="drive-title">{drive.display_name()}</span>
+            <span class="drive-root">{format!("Root: {}", display_path(&drive.root))}</span>
+        </button>
+    }
+}
+
+fn nav_button(label: &'static str, handler: fn(), selected: bool) -> Node {
+    let button = ui! {
+        <button class="nav-button" type="button" onclick={handler}>
+            <span class="button-fill"></span>
+            <span class="button-text">{label}</span>
+        </button>
+    };
+
+    if selected {
+        add_class(button, "selected")
+    } else {
+        button
+    }
+}
+
+fn action_button(label: &'static str, handler: fn()) -> Node {
+    ui! {
+        <button class="action-button" type="button" onclick={handler}>
+            <span class="button-fill"></span>
+            <span class="button-text">{label}</span>
+        </button>
+    }
+}
+
+fn toggle_button(label: &'static str, selected: bool, handler: fn()) -> Node {
+    let button = ui! {
+        <button class="toggle-button" type="button" onclick={handler}>
+            <span class="button-fill"></span>
+            <span class="toggle-state">{if selected { "ON" } else { "OFF" }}</span>
+            <span class="toggle-label">{label}</span>
+        </button>
+    };
+
+    if selected {
+        add_class(button, "selected")
+    } else {
+        button
+    }
+}
+
+fn add_class(node: Node, class_name: &'static str) -> Node {
+    match node {
+        Node::Element(element) => element.with_class(class_name).into(),
+        Node::Text(_) => node,
+    }
+}
+
+fn result_panel_class(level: ResultLevel) -> &'static str {
+    match level {
+        ResultLevel::Info => "result-panel-info",
+        ResultLevel::Warning => "result-panel-warning",
+        ResultLevel::Error => "result-panel-error",
+    }
+}
+
+fn result_level_label(level: ResultLevel) -> &'static str {
+    match level {
+        ResultLevel::Info => "Info",
+        ResultLevel::Warning => "Warning",
+        ResultLevel::Error => "Error",
+    }
+}
+
+fn stylesheet() -> &'static Stylesheet {
+    static STYLESHEET: OnceLock<Stylesheet> = OnceLock::new();
+
+    STYLESHEET.get_or_init(|| {
+        parse_stylesheet(include_str!("app.css")).expect("app stylesheet should stay valid")
+    })
+}
+
+fn command_open_launcher() {
+    enqueue(UiCommand::OpenLauncher);
+}
+
+fn command_open_settings() {
+    enqueue(UiCommand::OpenSettings);
+}
+
+fn command_exit() {
+    enqueue(UiCommand::Exit);
+}
+
+fn command_folder_page_counter() {
+    enqueue(UiCommand::ToolPressed(ToolId::FolderPageCounter));
+}
+
+fn command_usb_safe_eject() {
+    enqueue(UiCommand::ToolPressed(ToolId::UsbSafeEject));
+}
+
+fn command_pdf_joiner() {
+    enqueue(UiCommand::ToolPressed(ToolId::PdfJoiner));
+}
+
+fn command_toggle_include_subfolders() {
+    enqueue(UiCommand::ToggleIncludeSubfolders);
+}
+
+fn command_slide_1() {
+    enqueue(UiCommand::PowerPointSlidesPerPageChanged(1));
+}
+
+fn command_slide_2() {
+    enqueue(UiCommand::PowerPointSlidesPerPageChanged(2));
+}
+
+fn command_slide_3() {
+    enqueue(UiCommand::PowerPointSlidesPerPageChanged(3));
+}
+
+fn command_slide_4() {
+    enqueue(UiCommand::PowerPointSlidesPerPageChanged(4));
+}
+
+fn command_slide_6() {
+    enqueue(UiCommand::PowerPointSlidesPerPageChanged(6));
+}
+
+fn command_slide_9() {
+    enqueue(UiCommand::PowerPointSlidesPerPageChanged(9));
+}
+
+fn command_run_pending_page_counter() {
+    enqueue(UiCommand::RunPendingPageCounter);
+}
+
+fn command_cancel_pending_tool() {
+    enqueue(UiCommand::CancelPendingTool);
+}
+
+fn command_toggle_remember_last_folders() {
+    enqueue(UiCommand::ToggleRememberLastFolders);
+}
+
+fn command_toggle_open_on_tray_click() {
+    enqueue(UiCommand::ToggleOpenOnTrayClick);
+}
+
+fn command_dismiss_result() {
+    enqueue(UiCommand::DismissResult);
+}
+
+fn command_select_drive_0() {
+    enqueue(UiCommand::UsbDriveSelected(0));
+}
+
+fn command_select_drive_1() {
+    enqueue(UiCommand::UsbDriveSelected(1));
+}
+
+fn command_select_drive_2() {
+    enqueue(UiCommand::UsbDriveSelected(2));
+}
+
+fn command_select_drive_3() {
+    enqueue(UiCommand::UsbDriveSelected(3));
+}
+
+fn command_select_drive_4() {
+    enqueue(UiCommand::UsbDriveSelected(4));
+}
+
+fn command_select_drive_5() {
+    enqueue(UiCommand::UsbDriveSelected(5));
+}
+
+fn command_select_drive_6() {
+    enqueue(UiCommand::UsbDriveSelected(6));
+}
+
+fn command_select_drive_7() {
+    enqueue(UiCommand::UsbDriveSelected(7));
+}
+
+fn command_select_drive_8() {
+    enqueue(UiCommand::UsbDriveSelected(8));
+}
+
+fn command_select_drive_9() {
+    enqueue(UiCommand::UsbDriveSelected(9));
+}
+
+fn command_select_drive_10() {
+    enqueue(UiCommand::UsbDriveSelected(10));
+}
+
+fn command_select_drive_11() {
+    enqueue(UiCommand::UsbDriveSelected(11));
+}
+
+fn command_select_drive_12() {
+    enqueue(UiCommand::UsbDriveSelected(12));
+}
+
+fn command_select_drive_13() {
+    enqueue(UiCommand::UsbDriveSelected(13));
+}
+
+fn command_select_drive_14() {
+    enqueue(UiCommand::UsbDriveSelected(14));
+}
+
+fn command_select_drive_15() {
+    enqueue(UiCommand::UsbDriveSelected(15));
+}
+
+fn tool_handler(id: ToolId) -> fn() {
+    match id {
+        ToolId::FolderPageCounter => command_folder_page_counter,
+        ToolId::UsbSafeEject => command_usb_safe_eject,
+        ToolId::PdfJoiner => command_pdf_joiner,
+    }
+}
+
+fn slide_handler(value: u32) -> fn() {
+    match value {
+        1 => command_slide_1,
+        2 => command_slide_2,
+        3 => command_slide_3,
+        4 => command_slide_4,
+        6 => command_slide_6,
+        9 => command_slide_9,
+        _ => command_slide_4,
+    }
+}
+
+fn drive_select_handler(index: usize) -> Option<fn()> {
+    match index {
+        0 => Some(command_select_drive_0),
+        1 => Some(command_select_drive_1),
+        2 => Some(command_select_drive_2),
+        3 => Some(command_select_drive_3),
+        4 => Some(command_select_drive_4),
+        5 => Some(command_select_drive_5),
+        6 => Some(command_select_drive_6),
+        7 => Some(command_select_drive_7),
+        8 => Some(command_select_drive_8),
+        9 => Some(command_select_drive_9),
+        10 => Some(command_select_drive_10),
+        11 => Some(command_select_drive_11),
+        12 => Some(command_select_drive_12),
+        13 => Some(command_select_drive_13),
+        14 => Some(command_select_drive_14),
+        15 => Some(command_select_drive_15),
+        _ => None,
+    }
+}
+
+fn enqueue(command: UiCommand) {
+    ui_commands()
+        .lock()
+        .expect("UI command queue should not be poisoned")
+        .push(command);
+}
+
+fn take_ui_commands() -> Vec<UiCommand> {
+    std::mem::take(
+        &mut *ui_commands()
+            .lock()
+            .expect("UI command queue should not be poisoned"),
+    )
+}
+
+fn ui_commands() -> &'static Mutex<Vec<UiCommand>> {
+    UI_COMMANDS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn stylesheet_parses() {
+        let _ = super::stylesheet();
     }
 }

@@ -1,7 +1,3 @@
-use std::thread;
-
-use iced::{Subscription, stream};
-
 #[derive(Debug, Clone)]
 pub enum TrayEvent {
     OpenLauncher,
@@ -10,30 +6,10 @@ pub enum TrayEvent {
     Error(String),
 }
 
-pub fn subscription() -> Subscription<TrayEvent> {
-    Subscription::run(tray_events)
-}
-
-fn tray_events() -> impl iced::futures::Stream<Item = TrayEvent> {
-    stream::channel(10, async |mut output| {
-        let (sender, receiver) = std::sync::mpsc::channel();
-
-        if let Err(error) = platform::spawn(sender) {
-            let _ = output.try_send(TrayEvent::Error(error));
-            return;
-        }
-
-        thread::Builder::new()
-            .name("printltools-tray-events".to_string())
-            .spawn(move || {
-                while let Ok(event) = receiver.recv() {
-                    if output.try_send(event).is_err() {
-                        break;
-                    }
-                }
-            })
-            .ok();
-    })
+pub fn spawn_events() -> Result<std::sync::mpsc::Receiver<TrayEvent>, String> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    platform::spawn(sender)?;
+    Ok(receiver)
 }
 
 pub fn shutdown() {
