@@ -931,9 +931,9 @@ fn tool_button(tool: &'static ToolDefinition) -> Node {
         ToolStatus::Planned => "Planned",
     };
 
-    match tool.status {
+    let button = match tool.status {
         ToolStatus::Ready => ui! {
-            <button class={tool_button_class(tool.id)} type="button" onclick={tool_handler(tool.id)}>
+            <button class="tool-button" type="button" onclick={tool_handler(tool.id)}>
                 {tool_icon(tool.id)}
                 <span class="tool-copy">
                     <span class="tool-title">{tool.name}</span>
@@ -946,7 +946,7 @@ fn tool_button(tool: &'static ToolDefinition) -> Node {
             </button>
         },
         ToolStatus::Planned => ui! {
-            <button class={format!("{} disabled", tool_button_class(tool.id))} type="button">
+            <button class="tool-button" type="button">
                 {tool_icon(tool.id)}
                 <span class="tool-copy">
                     <span class="tool-title">{tool.name}</span>
@@ -958,6 +958,13 @@ fn tool_button(tool: &'static ToolDefinition) -> Node {
                 </span>
             </button>
         },
+    };
+
+    let button = add_class(button, tool_button_variant_class(tool.id));
+    if tool.status == ToolStatus::Planned {
+        add_class(button, "disabled")
+    } else {
+        button
     }
 }
 
@@ -1087,11 +1094,11 @@ fn add_class(node: Node, class_name: &'static str) -> Node {
     }
 }
 
-fn tool_button_class(id: ToolId) -> &'static str {
+fn tool_button_variant_class(id: ToolId) -> &'static str {
     match id {
-        ToolId::FolderPageCounter => "tool-button tool-folder",
-        ToolId::UsbSafeEject => "tool-button tool-usb",
-        ToolId::PdfJoiner => "tool-button tool-pdf",
+        ToolId::FolderPageCounter => "tool-folder",
+        ToolId::UsbSafeEject => "tool-usb",
+        ToolId::PdfJoiner => "tool-pdf",
     }
 }
 
