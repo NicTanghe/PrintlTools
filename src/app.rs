@@ -105,7 +105,7 @@ pub fn run() -> cssimpler::renderer::Result<()> {
     cssimpler::renderer::run_with_scene_provider(
         WindowConfig {
             clear_color: Color::rgb(54, 67, 78),
-            frame_time: Duration::from_millis(120),
+            frame_time: Duration::from_millis(16),
             ..WindowConfig::new("PrintLTools", 900, 760)
                 .with_glass_capable(true)
                 .with_decorations(false)
@@ -724,7 +724,6 @@ fn view(state: &PrintLTools) -> Node {
 
     ui! {
         <div id="app">
-            <div class="glass-layer"></div>
             <section class="shell">
                 <header class="topbar">
                     <div class="brand">

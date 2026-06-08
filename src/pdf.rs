@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use lopdf::{Document, Object, ObjectId};
+use lopdf::{Dictionary, Document, Object, ObjectId};
 
 #[derive(Debug, Clone)]
 pub struct PdfMergeSummary {
@@ -45,16 +45,7 @@ pub fn merge_pdfs(input_paths: &[PathBuf], output_path: &Path) -> Result<PdfMerg
         }
 
         for object_id in pages.into_values() {
-            let object = document
-                .get_object(object_id)
-                .map_err(|error| {
-                    format!(
-                        "Could not read page object in {}: {error}",
-                        input_path.display()
-                    )
-                })?
-                .to_owned();
-
+            let object = page_with_inherited_attributes(&document, object_id, input_path)?;
             page_objects.push((object_id, object));
         }
 
@@ -63,46 +54,24 @@ pub fn merge_pdfs(input_paths: &[PathBuf], output_path: &Path) -> Result<PdfMerg
 
     let total_pages = page_objects.len();
     let mut output_document = Document::with_version("1.5");
-    let mut catalog_object: Option<(ObjectId, Object)> = None;
-    let mut pages_object: Option<(ObjectId, Object)> = None;
 
     for (object_id, object) in source_objects {
         match object.type_name().unwrap_or(b"") {
-            b"Catalog" => {
-                let catalog_id = catalog_object
-                    .as_ref()
-                    .map(|(id, _)| *id)
-                    .unwrap_or(object_id);
-                catalog_object = Some((catalog_id, object));
-            }
-            b"Pages" => {
-                if let Ok(dictionary) = object.as_dict() {
-                    let mut dictionary = dictionary.clone();
-
-                    if let Some((_, existing_object)) = &pages_object {
-                        if let Ok(existing_dictionary) = existing_object.as_dict() {
-                            dictionary.extend(existing_dictionary);
-                        }
-                    }
-
-                    let pages_id = pages_object
-                        .as_ref()
-                        .map(|(id, _)| *id)
-                        .unwrap_or(object_id);
-                    pages_object = Some((pages_id, Object::Dictionary(dictionary)));
-                }
-            }
-            b"Page" | b"Outlines" | b"Outline" => {}
+            b"Catalog" | b"Pages" | b"Page" | b"Outlines" | b"Outline" => {}
             _ => {
                 output_document.objects.insert(object_id, object);
             }
         }
     }
 
-    let (pages_id, pages_object) =
-        pages_object.ok_or_else(|| "Pages root not found in selected PDFs.".to_string())?;
-    let (catalog_id, catalog_object) =
-        catalog_object.ok_or_else(|| "Catalog root not found in selected PDFs.".to_string())?;
+    output_document.max_id = output_document
+        .objects
+        .keys()
+        .map(|(id, _)| *id)
+        .max()
+        .unwrap_or(0);
+    let pages_id = output_document.new_object_id();
+    let catalog_id = output_document.new_object_id();
 
     for (object_id, object) in &page_objects {
         let dictionary = object.as_dict().map_err(|error| {
@@ -115,10 +84,8 @@ pub fn merge_pdfs(input_paths: &[PathBuf], output_path: &Path) -> Result<PdfMerg
             .insert(*object_id, Object::Dictionary(dictionary));
     }
 
-    let mut pages_dictionary = pages_object
-        .as_dict()
-        .map_err(|error| format!("Pages root is not a dictionary: {error}"))?
-        .clone();
+    let mut pages_dictionary = Dictionary::new();
+    pages_dictionary.set("Type", "Pages");
     pages_dictionary.set("Count", total_pages as u32);
     pages_dictionary.set(
         "Kids",
@@ -131,12 +98,9 @@ pub fn merge_pdfs(input_paths: &[PathBuf], output_path: &Path) -> Result<PdfMerg
         .objects
         .insert(pages_id, Object::Dictionary(pages_dictionary));
 
-    let mut catalog_dictionary = catalog_object
-        .as_dict()
-        .map_err(|error| format!("Catalog root is not a dictionary: {error}"))?
-        .clone();
+    let mut catalog_dictionary = Dictionary::new();
+    catalog_dictionary.set("Type", "Catalog");
     catalog_dictionary.set("Pages", pages_id);
-    catalog_dictionary.remove(b"Outlines");
     output_document
         .objects
         .insert(catalog_id, Object::Dictionary(catalog_dictionary));
@@ -202,6 +166,94 @@ fn save_without_partial_output(document: &mut Document, output_path: &Path) -> R
     })
 }
 
+fn page_with_inherited_attributes(
+    document: &Document,
+    page_id: ObjectId,
+    input_path: &Path,
+) -> Result<Object, String> {
+    let mut dictionary = document
+        .get_object(page_id)
+        .map_err(|error| {
+            format!(
+                "Could not read page object in {}: {error}",
+                input_path.display()
+            )
+        })?
+        .as_dict()
+        .map_err(|error| {
+            format!(
+                "Page object {page_id:?} in {} is not a page dictionary: {error}",
+                input_path.display()
+            )
+        })?
+        .clone();
+
+    for key in INHERITED_PAGE_ATTRIBUTES {
+        if !dictionary.has(key) {
+            if let Some(value) = inherited_page_attribute(document, &dictionary, key, input_path)? {
+                dictionary.set(key.to_vec(), value);
+            }
+        }
+    }
+
+    Ok(Object::Dictionary(dictionary))
+}
+
+const INHERITED_PAGE_ATTRIBUTES: [&[u8]; 8] = [
+    b"Resources",
+    b"MediaBox",
+    b"CropBox",
+    b"BleedBox",
+    b"TrimBox",
+    b"ArtBox",
+    b"Rotate",
+    b"UserUnit",
+];
+
+fn inherited_page_attribute(
+    document: &Document,
+    page_dictionary: &Dictionary,
+    key: &[u8],
+    input_path: &Path,
+) -> Result<Option<Object>, String> {
+    let mut parent_id = match page_dictionary
+        .get(b"Parent")
+        .and_then(Object::as_reference)
+    {
+        Ok(parent_id) => parent_id,
+        Err(_) => return Ok(None),
+    };
+    let mut seen = HashSet::new();
+
+    loop {
+        if !seen.insert(parent_id) {
+            return Err(format!(
+                "Page tree has a parent cycle in {} near object {parent_id:?}.",
+                input_path.display()
+            ));
+        }
+
+        let parent_dictionary = document.get_dictionary(parent_id).map_err(|error| {
+            format!(
+                "Could not read page parent object {parent_id:?} in {}: {error}",
+                input_path.display()
+            )
+        })?;
+
+        if let Ok(value) = parent_dictionary.get(key) {
+            return Ok(Some(value.clone()));
+        }
+
+        parent_id = match parent_dictionary
+            .get(b"Parent")
+            .and_then(Object::as_reference)
+        {
+            Ok(parent_id) => parent_id,
+            Err(_) => return Ok(None),
+        };
+    }
+}
+
 fn canonical_for_compare(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
@@ -237,6 +289,37 @@ mod tests {
         assert_eq!(merged.get_pages().len(), 2);
     }
 
+    #[test]
+    fn preserves_pages_that_inherit_rendering_attributes() {
+        let workspace = TestWorkspace::new();
+        let first = workspace.path.join("first.pdf");
+        let second = workspace.path.join("second.pdf");
+        let output = workspace.path.join("joined.pdf");
+
+        create_test_pdf_with_layout(&first, "First", PageLayout::Inherited);
+        create_test_pdf_with_layout(&second, "Second", PageLayout::Inherited);
+
+        merge_pdfs(&[first, second], &output).unwrap();
+
+        let merged = Document::load(&output).unwrap();
+        let pages = merged.get_pages();
+        assert_eq!(pages.len(), 2);
+
+        let mut contents = Vec::new();
+        for page_id in pages.into_values() {
+            let page = merged.get_dictionary(page_id).unwrap();
+            assert!(page.has(b"Resources"));
+            assert!(page.has(b"MediaBox"));
+            assert!(!merged.get_page_fonts(page_id).unwrap().is_empty());
+            contents.push(
+                String::from_utf8_lossy(&merged.get_page_content(page_id).unwrap()).into_owned(),
+            );
+        }
+
+        assert!(contents.iter().any(|content| content.contains("First")));
+        assert!(contents.iter().any(|content| content.contains("Second")));
+    }
+
     struct TestWorkspace {
         path: PathBuf,
     }
@@ -265,6 +348,15 @@ mod tests {
     }
 
     fn create_test_pdf(path: &Path, label: &str) {
+        create_test_pdf_with_layout(path, label, PageLayout::Direct);
+    }
+
+    enum PageLayout {
+        Direct,
+        Inherited,
+    }
+
+    fn create_test_pdf_with_layout(path: &Path, label: &str, layout: PageLayout) {
         let mut document = Document::with_version("1.5");
         let pages_id = document.new_object_id();
         let font_id = document.add_object(dictionary! {
@@ -288,22 +380,33 @@ mod tests {
         };
         let content_id =
             document.add_object(Stream::new(dictionary! {}, content.encode().unwrap()));
-        let page_id = document.add_object(dictionary! {
+        let mut page_dictionary = dictionary! {
             "Type" => "Page",
             "Parent" => pages_id,
             "Contents" => content_id,
-            "Resources" => resources_id,
-            "MediaBox" => vec![0.into(), 0.into(), 595.into(), 842.into()],
-        });
+        };
+        let mut pages_dictionary = dictionary! {
+            "Type" => "Pages",
+            "Count" => 1,
+        };
 
-        document.objects.insert(
-            pages_id,
-            Object::Dictionary(dictionary! {
-                "Type" => "Pages",
-                "Kids" => vec![page_id.into()],
-                "Count" => 1,
-            }),
-        );
+        match layout {
+            PageLayout::Direct => {
+                page_dictionary.set("Resources", resources_id);
+                page_dictionary.set("MediaBox", vec![0.into(), 0.into(), 595.into(), 842.into()]);
+            }
+            PageLayout::Inherited => {
+                pages_dictionary.set("Resources", resources_id);
+                pages_dictionary.set("MediaBox", vec![0.into(), 0.into(), 595.into(), 842.into()]);
+            }
+        }
+
+        let page_id = document.add_object(page_dictionary);
+
+        pages_dictionary.set("Kids", vec![page_id.into()]);
+        document
+            .objects
+            .insert(pages_id, Object::Dictionary(pages_dictionary));
         let catalog_id = document.add_object(dictionary! {
             "Type" => "Catalog",
             "Pages" => pages_id,
