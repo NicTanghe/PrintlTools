@@ -934,6 +934,8 @@ fn tool_button(tool: &'static ToolDefinition) -> Node {
     let button = match tool.status {
         ToolStatus::Ready => ui! {
             <button class="tool-button" type="button" onclick={tool_handler(tool.id)}>
+                <span class="tool-accent"></span>
+                <span class="tool-surface"></span>
                 {tool_icon(tool.id)}
                 <span class="tool-copy">
                     <span class="tool-title">{tool.name}</span>
@@ -947,6 +949,8 @@ fn tool_button(tool: &'static ToolDefinition) -> Node {
         },
         ToolStatus::Planned => ui! {
             <button class="tool-button" type="button">
+                <span class="tool-accent"></span>
+                <span class="tool-surface"></span>
                 {tool_icon(tool.id)}
                 <span class="tool-copy">
                     <span class="tool-title">{tool.name}</span>
@@ -1145,10 +1149,7 @@ fn icon_document() -> Node {
 fn icon_folder() -> Node {
     svg_icon(
         "icon-folder",
-        &[
-            "M3 7 L9 7 L11 9 L21 9 L21 19 L3 19 Z",
-            "M3 7 L3 19",
-        ],
+        &["M3 7 L9 7 L11 9 L21 9 L21 19 L3 19 Z", "M3 7 L3 19"],
         &[],
     )
 }
@@ -1167,11 +1168,7 @@ fn icon_usb() -> Node {
 }
 
 fn icon_launch() -> Node {
-    svg_icon(
-        "icon-launch",
-        &["M5 19 L19 5", "M10 5 L19 5 L19 14"],
-        &[],
-    )
+    svg_icon("icon-launch", &["M5 19 L19 5", "M10 5 L19 5 L19 14"], &[])
 }
 
 fn icon_sliders() -> Node {
@@ -1185,11 +1182,7 @@ fn icon_sliders() -> Node {
 fn icon_exit() -> Node {
     svg_icon(
         "icon-exit",
-        &[
-            "M10 7 L15 12 L10 17",
-            "M15 12 L3 12",
-            "M21 5 L21 19 L17 19",
-        ],
+        &["M10 7 L15 12 L10 17", "M15 12 L3 12", "M21 5 L21 19 L17 19"],
         &[],
     )
 }
@@ -1457,8 +1450,43 @@ fn ui_commands() -> &'static Mutex<Vec<UiCommand>> {
 
 #[cfg(test)]
 mod tests {
+    use cssimpler::core::{Color, Node, RenderNode};
+    use cssimpler::style::build_render_tree_in_viewport;
+
     #[test]
     fn stylesheet_parses() {
         let _ = super::stylesheet();
+    }
+
+    #[test]
+    fn tool_accent_keeps_css_radius() {
+        let button = Node::element("button")
+            .with_class("tool-button")
+            .with_class("tool-folder")
+            .with_child(Node::element("span").with_class("tool-accent").into());
+        let root = Node::element("div")
+            .with_class("tool-list")
+            .with_child(button.into())
+            .into();
+
+        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 400, 140);
+        let accent = find_node_with_background(&scene, Color::rgb(34, 135, 214))
+            .expect("tool accent should resolve to the folder accent color");
+
+        assert_eq!(accent.layout.width, 24.0);
+        assert_eq!(accent.layout.height, 112.0);
+        assert!(accent.layout.x >= 0.0);
+        assert_eq!(accent.style.corner_radius.top_left, 9.0);
+        assert_eq!(accent.style.corner_radius.bottom_left, 9.0);
+    }
+
+    fn find_node_with_background(node: &RenderNode, color: Color) -> Option<&RenderNode> {
+        if node.style.background == Some(color) {
+            return Some(node);
+        }
+
+        node.children
+            .iter()
+            .find_map(|child| find_node_with_background(child, color))
     }
 }

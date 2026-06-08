@@ -35,14 +35,14 @@
   height: 74px;
   justify-content: space-between;
   align-items: center;
-  gap: 28px;
+  gap: 20px;
   padding: 0px;
   background: rgba(255, 255, 255, 0);
 }
 
 .brand {
   display: flex;
-  width: 336px;
+  width: 316px;
   height: 64px;
   align-items: center;
   gap: 16px;
@@ -68,13 +68,13 @@
 
 .brand-copy {
   display: flex;
-  width: 260px;
+  width: 240px;
   flex-direction: column;
   gap: 5px;
 }
 
 .brand h1 {
-  width: 260px;
+  width: 240px;
   margin: 0px;
   color: rgb(12, 20, 30);
   font-size: 29px;
@@ -83,7 +83,7 @@
 }
 
 .brand p {
-  width: 260px;
+  width: 240px;
   margin: 0px;
   color: rgb(58, 73, 88);
   font-size: 15px;
@@ -91,7 +91,7 @@
 
 .top-actions {
   display: flex;
-  width: 460px;
+  width: 456px;
   height: 48px;
   gap: 12px;
   align-items: center;
@@ -173,16 +173,31 @@
   gap: 14px;
 }
 
-.tool-button,
-.drive-button {
+.tool-button {
   display: flex;
   position: relative;
   width: 100%;
+  min-height: 112px;
+  align-items: center;
+  gap: 22px;
+  padding: 18px 24px 18px 44px;
+  margin-left: 0px;
+  color: rgb(21, 32, 45);
+  background: rgba(255, 255, 255, 0);
+  border: 0px solid rgba(255, 255, 255, 0);
+  border-radius: 0px;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+  overflow: visible;
+}
+
+.drive-button {
+  display: flex;
+  position: relative;
   width: calc(100% + 4px);
   min-height: 112px;
   align-items: center;
   gap: 22px;
-  padding: 18px 24px 18px 28px;
+  padding: 18px 24px 18px 32px;
   margin-left: -4px;
   color: rgb(21, 32, 45);
   background: rgb(238, 246, 250);
@@ -192,42 +207,52 @@
   overflow: hidden;
 }
 
-.tool-button:hover,
+.tool-surface {
+  position: absolute;
+  left: 14px;
+  top: 0px;
+  display: block;
+  width: calc(100% - 14px);
+  height: 100%;
+  background: rgb(238, 246, 250);
+  border: 1px solid rgb(250, 253, 255);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(43, 63, 76, 0.08);
+  z-index: 1;
+}
+
+.tool-button:hover .tool-surface {
+  background: rgb(248, 252, 255);
+  border: 1px solid rgb(130, 178, 210);
+}
+
 .drive-button:hover {
   background: rgb(248, 252, 255);
   border: 1px solid rgb(130, 178, 210);
 }
 
-.tool-folder {
-  background:
-    linear-gradient(90deg, rgb(34, 135, 214) 0px, rgb(34, 135, 214) 8px, rgb(238, 246, 250) 8px, rgb(238, 246, 250) 100%);
+.tool-accent {
+  position: absolute;
+  left: 0px;
+  top: 0px;
+  display: block;
+  width: 24px;
+  height: 100%;
+  background: rgb(34, 135, 214);
+  border-radius: 9px;
+  z-index: 0;
 }
 
-.tool-folder:hover {
-  background:
-    linear-gradient(90deg, rgb(34, 135, 214) 0px, rgb(34, 135, 214) 8px, rgb(248, 252, 255) 8px, rgb(248, 252, 255) 100%);
+.tool-folder .tool-accent {
+  background: rgb(34, 135, 214);
 }
 
-.tool-usb,
-.drive-button {
-  background:
-    linear-gradient(90deg, rgb(30, 180, 132) 0px, rgb(30, 180, 132) 8px, rgb(238, 246, 250) 8px, rgb(238, 246, 250) 100%);
+.tool-usb .tool-accent {
+  background: rgb(30, 180, 132);
 }
 
-.tool-usb:hover,
-.drive-button:hover {
-  background:
-    linear-gradient(90deg, rgb(30, 180, 132) 0px, rgb(30, 180, 132) 8px, rgb(248, 252, 255) 8px, rgb(248, 252, 255) 100%);
-}
-
-.tool-pdf {
-  background:
-    linear-gradient(90deg, rgb(117, 86, 206) 0px, rgb(117, 86, 206) 8px, rgb(238, 246, 250) 8px, rgb(238, 246, 250) 100%);
-}
-
-.tool-pdf:hover {
-  background:
-    linear-gradient(90deg, rgb(117, 86, 206) 0px, rgb(117, 86, 206) 8px, rgb(248, 252, 255) 8px, rgb(248, 252, 255) 100%);
+.tool-pdf .tool-accent {
+  background: rgb(117, 86, 206);
 }
 
 .tool-icon,
@@ -242,6 +267,7 @@
   border: 1px solid rgb(179, 199, 214);
   border-radius: 8px;
   box-shadow: 0 4px 10px rgba(44, 63, 78, 0.08);
+  z-index: 2;
 }
 
 .tool-icon.folder {
@@ -283,9 +309,11 @@
 .tool-copy,
 .drive-copy {
   display: flex;
+  position: relative;
   width: 610px;
   flex-direction: column;
   gap: 7px;
+  z-index: 2;
 }
 
 .tool-title,
@@ -329,11 +357,13 @@
 
 .tool-chevron {
   display: flex;
+  position: relative;
   width: 26px;
   height: 40px;
   justify-content: center;
   align-items: center;
   color: rgb(61, 78, 94);
+  z-index: 2;
 }
 
 .tool-chevron .svg-icon {
@@ -347,6 +377,16 @@
   border: 1px solid rgba(164, 178, 188, 0.58);
 }
 
+.tool-button.disabled {
+  background: rgba(255, 255, 255, 0);
+  border: 0px solid rgba(255, 255, 255, 0);
+}
+
+.tool-button.disabled .tool-surface {
+  background: rgba(224, 234, 240, 0.42);
+  border: 1px solid rgba(164, 178, 188, 0.58);
+}
+
 .nav-button,
 .action-button {
   display: flex;
@@ -356,7 +396,7 @@
   gap: 9px;
   padding: 0px 14px;
   color: rgb(247, 251, 255);
-  background: rgb(87, 106, 125);
+  background: rgba(87, 106, 125, 0.76);
   border: 1px solid rgb(222, 238, 248);
   border-radius: 8px;
   font-size: 14px;
@@ -366,7 +406,7 @@
 }
 
 .nav-button {
-  width: 146px;
+  width: 160px;
 }
 
 .action-button {
@@ -375,7 +415,7 @@
 
 .nav-button:hover,
 .action-button:hover {
-  background: rgb(74, 92, 110);
+  background: rgba(74, 92, 110, 0.84);
   border: 1px solid rgb(238, 248, 255);
 }
 
@@ -383,25 +423,25 @@
 .action-button.danger {
   width: 112px;
   color: rgb(255, 250, 252);
-  background: rgb(210, 58, 96);
+  background: rgba(210, 58, 96, 0.86);
   border: 1px solid rgb(255, 226, 236);
   box-shadow: 0 12px 28px rgba(190, 45, 84, 0.28);
 }
 
 .nav-button.danger:hover,
 .action-button.danger:hover {
-  background: rgb(186, 45, 80);
+  background: rgba(186, 45, 80, 0.92);
 }
 
 .nav-button.selected {
   color: rgb(255, 255, 255);
-  background: rgb(38, 130, 205);
+  background: rgba(38, 130, 205, 0.86);
   border: 1px solid rgb(226, 242, 252);
   box-shadow: 0 12px 28px rgba(35, 113, 178, 0.28);
 }
 
 .nav-button.selected:hover {
-  background: rgb(30, 113, 184);
+  background: rgba(30, 113, 184, 0.92);
 }
 
 .button-icon {
@@ -420,6 +460,15 @@
 .button-text {
   display: block;
   line-height: 1.15;
+}
+
+.nav-button .button-text {
+  width: 84px;
+  height: 18px;
+}
+
+.nav-button.danger .button-text {
+  width: 36px;
 }
 
 .button-row {
