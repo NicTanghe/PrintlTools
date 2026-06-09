@@ -238,21 +238,14 @@
   display: block;
   width: 24px;
   height: 100%;
-  background: rgb(34, 135, 214);
+  background: linear-gradient(
+    180deg,
+    var(--tool-accent-top) 0%,
+    var(--tool-accent-mid) 48%,
+    var(--tool-accent-bottom) 100%
+  );
   border-radius: 9px;
   z-index: 0;
-}
-
-.tool-folder .tool-accent {
-  background: rgb(34, 135, 214);
-}
-
-.tool-usb .tool-accent {
-  background: rgb(30, 180, 132);
-}
-
-.tool-pdf .tool-accent {
-  background: rgb(117, 86, 206);
 }
 
 .tool-icon,

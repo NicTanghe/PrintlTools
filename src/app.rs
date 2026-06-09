@@ -5,7 +5,9 @@ use std::thread;
 use std::time::Duration;
 
 use cssimpler::app::{App, Invalidation};
-use cssimpler::core::{Color, ElementInteractionState, Node, RenderNode};
+use cssimpler::core::{
+    Color, ElementInteractionState, GradientInterpolation, Node, RenderNode, Style,
+};
 use cssimpler::renderer::{FrameInfo, RedrawSchedule, SceneProvider, ViewportSize, WindowConfig};
 use cssimpler::style::{Stylesheet, parse_stylesheet};
 use cssimpler::ui;
@@ -965,6 +967,7 @@ fn tool_button(tool: &'static ToolDefinition) -> Node {
     };
 
     let button = add_class(button, tool_button_variant_class(tool.id));
+    let button = add_style(button, tool_accent_style(tool.id));
     if tool.status == ToolStatus::Planned {
         add_class(button, "disabled")
     } else {
@@ -1098,12 +1101,69 @@ fn add_class(node: Node, class_name: &'static str) -> Node {
     }
 }
 
+fn add_style(node: Node, style: Style) -> Node {
+    match node {
+        Node::Element(element) => element.with_style(style).into(),
+        Node::Text(_) => node,
+    }
+}
+
 fn tool_button_variant_class(id: ToolId) -> &'static str {
     match id {
         ToolId::FolderPageCounter => "tool-folder",
         ToolId::UsbSafeEject => "tool-usb",
         ToolId::PdfJoiner => "tool-pdf",
     }
+}
+
+#[derive(Clone, Copy)]
+struct AccentGradient {
+    top: Color,
+    mid: Color,
+    bottom: Color,
+}
+
+fn tool_accent_style(id: ToolId) -> Style {
+    let gradient = generated_accent_gradient(tool_accent_base(id));
+    let mut style = Style::default();
+    style
+        .custom_properties
+        .set("--tool-accent-top", color_css(gradient.top));
+    style
+        .custom_properties
+        .set("--tool-accent-mid", color_css(gradient.mid));
+    style
+        .custom_properties
+        .set("--tool-accent-bottom", color_css(gradient.bottom));
+    style
+}
+
+fn tool_accent_base(id: ToolId) -> Color {
+    match id {
+        ToolId::FolderPageCounter => Color::rgb(34, 135, 214),
+        ToolId::UsbSafeEject => Color::rgb(30, 180, 132),
+        ToolId::PdfJoiner => Color::rgb(117, 86, 206),
+    }
+}
+
+fn generated_accent_gradient(base: Color) -> AccentGradient {
+    AccentGradient {
+        top: mix_color(base, Color::WHITE, 0.34),
+        mid: base,
+        bottom: mix_color(base, Color::BLACK, 0.22),
+    }
+}
+
+fn mix_color(from: Color, to: Color, amount: f32) -> Color {
+    Color::from_linear_rgba(from.to_linear_rgba().interpolate(
+        to.to_linear_rgba(),
+        amount,
+        GradientInterpolation::Oklab,
+    ))
+}
+
+fn color_css(color: Color) -> String {
+    format!("rgb({}, {}, {})", color.r, color.g, color.b)
 }
 
 fn tool_icon(id: ToolId) -> Node {
@@ -1450,7 +1510,7 @@ fn ui_commands() -> &'static Mutex<Vec<UiCommand>> {
 
 #[cfg(test)]
 mod tests {
-    use cssimpler::core::{Color, Node, RenderNode};
+    use cssimpler::core::{BackgroundLayer, Color, Node, RenderNode};
     use cssimpler::style::build_render_tree_in_viewport;
 
     #[test]
@@ -1459,10 +1519,13 @@ mod tests {
     }
 
     #[test]
-    fn tool_accent_keeps_css_radius() {
+    fn tool_accent_keeps_css_radius_and_gradient() {
         let button = Node::element("button")
             .with_class("tool-button")
             .with_class("tool-folder")
+            .with_style(super::tool_accent_style(
+                crate::registry::ToolId::FolderPageCounter,
+            ))
             .with_child(Node::element("span").with_class("tool-accent").into());
         let root = Node::element("div")
             .with_class("tool-list")
@@ -1470,23 +1533,29 @@ mod tests {
             .into();
 
         let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 400, 140);
-        let accent = find_node_with_background(&scene, Color::rgb(34, 135, 214))
-            .expect("tool accent should resolve to the folder accent color");
+        let accent =
+            find_node_with_gradient(&scene).expect("tool accent should resolve a gradient");
 
         assert_eq!(accent.layout.width, 24.0);
         assert_eq!(accent.layout.height, 112.0);
         assert!(accent.layout.x >= 0.0);
         assert_eq!(accent.style.corner_radius.top_left, 9.0);
         assert_eq!(accent.style.corner_radius.bottom_left, 9.0);
+
+        let BackgroundLayer::LinearGradient(gradient) = &accent.style.background_layers[0] else {
+            panic!("tool accent should use a linear gradient");
+        };
+        let expected = super::generated_accent_gradient(Color::rgb(34, 135, 214));
+        assert_eq!(gradient.stops[0].color, expected.top);
+        assert_eq!(gradient.stops[1].color, expected.mid);
+        assert_eq!(gradient.stops[2].color, expected.bottom);
     }
 
-    fn find_node_with_background(node: &RenderNode, color: Color) -> Option<&RenderNode> {
-        if node.style.background == Some(color) {
+    fn find_node_with_gradient(node: &RenderNode) -> Option<&RenderNode> {
+        if !node.style.background_layers.is_empty() {
             return Some(node);
         }
 
-        node.children
-            .iter()
-            .find_map(|child| find_node_with_background(child, color))
+        node.children.iter().find_map(find_node_with_gradient)
     }
 }
