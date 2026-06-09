@@ -5,9 +5,7 @@ use std::thread;
 use std::time::Duration;
 
 use cssimpler::app::{App, Invalidation};
-use cssimpler::core::{
-    Color, ElementInteractionState, GradientInterpolation, Node, RenderNode, Style,
-};
+use cssimpler::core::{Color, ElementInteractionState, Node, RenderNode, Style};
 use cssimpler::renderer::{FrameInfo, RedrawSchedule, SceneProvider, ViewportSize, WindowConfig};
 use cssimpler::style::{Stylesheet, parse_stylesheet};
 use cssimpler::ui;
@@ -1118,9 +1116,10 @@ fn tool_button_variant_class(id: ToolId) -> &'static str {
 
 #[derive(Clone, Copy)]
 struct AccentGradient {
-    top: Color,
-    mid: Color,
-    bottom: Color,
+    start: Color,
+    saturated: Color,
+    cooling: Color,
+    end: Color,
 }
 
 fn tool_accent_style(id: ToolId) -> Style {
@@ -1128,13 +1127,16 @@ fn tool_accent_style(id: ToolId) -> Style {
     let mut style = Style::default();
     style
         .custom_properties
-        .set("--tool-accent-top", color_css(gradient.top));
+        .set("--tool-accent-start", color_css(gradient.start));
     style
         .custom_properties
-        .set("--tool-accent-mid", color_css(gradient.mid));
+        .set("--tool-accent-saturated", color_css(gradient.saturated));
     style
         .custom_properties
-        .set("--tool-accent-bottom", color_css(gradient.bottom));
+        .set("--tool-accent-cooling", color_css(gradient.cooling));
+    style
+        .custom_properties
+        .set("--tool-accent-end", color_css(gradient.end));
     style
 }
 
@@ -1147,19 +1149,115 @@ fn tool_accent_base(id: ToolId) -> Color {
 }
 
 fn generated_accent_gradient(base: Color) -> AccentGradient {
+    let base = HsvColor::from_color(base);
+    let cold_hue = cooler_hue(base.hue);
+
     AccentGradient {
-        top: mix_color(base, Color::WHITE, 0.34),
-        mid: base,
-        bottom: mix_color(base, Color::BLACK, 0.22),
+        start: HsvColor {
+            hue: lerp_hue(base.hue, cold_hue, 0.16),
+            saturation: base.saturation.max(0.78),
+            value: 0.70,
+        }
+        .to_color(),
+        saturated: HsvColor {
+            hue: lerp_hue(base.hue, cold_hue, 0.38),
+            saturation: 1.0,
+            value: 1.0,
+        }
+        .to_color(),
+        cooling: HsvColor {
+            hue: lerp_hue(base.hue, cold_hue, 0.72),
+            saturation: 0.78,
+            value: 1.0,
+        }
+        .to_color(),
+        end: HsvColor {
+            hue: cold_hue,
+            saturation: 0.50,
+            value: 1.0,
+        }
+        .to_color(),
     }
 }
 
-fn mix_color(from: Color, to: Color, amount: f32) -> Color {
-    Color::from_linear_rgba(from.to_linear_rgba().interpolate(
-        to.to_linear_rgba(),
-        amount,
-        GradientInterpolation::Oklab,
-    ))
+#[derive(Clone, Copy)]
+struct HsvColor {
+    hue: f32,
+    saturation: f32,
+    value: f32,
+}
+
+impl HsvColor {
+    fn from_color(color: Color) -> Self {
+        let r = color.r as f32 / 255.0;
+        let g = color.g as f32 / 255.0;
+        let b = color.b as f32 / 255.0;
+        let max = r.max(g).max(b);
+        let min = r.min(g).min(b);
+        let delta = max - min;
+
+        let hue = if delta <= f32::EPSILON {
+            0.0
+        } else if max == r {
+            60.0 * ((g - b) / delta).rem_euclid(6.0)
+        } else if max == g {
+            60.0 * (((b - r) / delta) + 2.0)
+        } else {
+            60.0 * (((r - g) / delta) + 4.0)
+        };
+
+        Self {
+            hue,
+            saturation: if max <= f32::EPSILON {
+                0.0
+            } else {
+                delta / max
+            },
+            value: max,
+        }
+    }
+
+    fn to_color(self) -> Color {
+        let hue = self.hue.rem_euclid(360.0) / 60.0;
+        let saturation = self.saturation.clamp(0.0, 1.0);
+        let value = self.value.clamp(0.0, 1.0);
+        let chroma = value * saturation;
+        let x = chroma * (1.0 - (hue.rem_euclid(2.0) - 1.0).abs());
+        let m = value - chroma;
+
+        let (r, g, b) = if hue < 1.0 {
+            (chroma, x, 0.0)
+        } else if hue < 2.0 {
+            (x, chroma, 0.0)
+        } else if hue < 3.0 {
+            (0.0, chroma, x)
+        } else if hue < 4.0 {
+            (0.0, x, chroma)
+        } else if hue < 5.0 {
+            (x, 0.0, chroma)
+        } else {
+            (chroma, 0.0, x)
+        };
+
+        Color::rgb(
+            color_channel(r + m),
+            color_channel(g + m),
+            color_channel(b + m),
+        )
+    }
+}
+
+fn cooler_hue(hue: f32) -> f32 {
+    if hue > 240.0 { hue - 26.0 } else { hue + 26.0 }
+}
+
+fn lerp_hue(from: f32, to: f32, amount: f32) -> f32 {
+    let delta = (to - from + 540.0).rem_euclid(360.0) - 180.0;
+    (from + delta * amount).rem_euclid(360.0)
+}
+
+fn color_channel(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 fn color_css(color: Color) -> String {
@@ -1546,9 +1644,10 @@ mod tests {
             panic!("tool accent should use a linear gradient");
         };
         let expected = super::generated_accent_gradient(Color::rgb(34, 135, 214));
-        assert_eq!(gradient.stops[0].color, expected.top);
-        assert_eq!(gradient.stops[1].color, expected.mid);
-        assert_eq!(gradient.stops[2].color, expected.bottom);
+        assert_eq!(gradient.stops[0].color, expected.start);
+        assert_eq!(gradient.stops[1].color, expected.saturated);
+        assert_eq!(gradient.stops[2].color, expected.cooling);
+        assert_eq!(gradient.stops[3].color, expected.end);
     }
 
     fn find_node_with_gradient(node: &RenderNode) -> Option<&RenderNode> {
