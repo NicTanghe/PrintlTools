@@ -209,7 +209,7 @@
 
 .tool-surface {
     position: absolute;
-    left: 4px;
+    left: 3px;
     top: 0px;
     display: block;
     width: calc(100% - 14px);
@@ -241,10 +241,11 @@
     background: linear-gradient(
         0deg,
         var(--tool-accent-shadow) 0%,
-        var(--tool-accent-body) 18%,
-        var(--tool-accent-saturated) 55%,
-        var(--tool-accent-shifted) 83%,
-        var(--tool-accent-end) 100%
+        var(--tool-accent-body) 14%,
+        var(--tool-accent-body) 54%,
+        var(--tool-accent-saturated) 82%,
+        var(--tool-accent-shifted) 93%,
+        var(--tool-accent-end) 97%
     );
     border-radius: 9px;
     z-index: 0;

@@ -1152,23 +1152,18 @@ fn tool_accent_base(id: ToolId) -> Color {
     }
 }
 
-fn generated_accent_gradient(base: Color) -> AccentGradient {
-    let base = HsvColor::from_color(base);
+fn generated_accent_gradient(base_color: Color) -> AccentGradient {
+    let base = HsvColor::from_color(base_color);
     let shifted_hue = accent_target_hue(base.hue);
 
     AccentGradient {
         shadow: HsvColor {
             hue: lerp_hue(base.hue, shifted_hue, 0.04),
-            saturation: base.saturation.max(0.72),
-            value: 0.62,
+            saturation: base.saturation.max(0.76),
+            value: 0.52,
         }
         .to_color(),
-        body: HsvColor {
-            hue: lerp_hue(base.hue, shifted_hue, 0.14),
-            saturation: 0.92,
-            value: 0.90,
-        }
-        .to_color(),
+        body: base_color,
         saturated: HsvColor {
             hue: lerp_hue(base.hue, shifted_hue, 0.34),
             saturation: 1.0,
@@ -1662,9 +1657,10 @@ mod tests {
         let expected = super::generated_accent_gradient(Color::rgb(34, 135, 214));
         assert_eq!(gradient.stops[0].color, expected.shadow);
         assert_eq!(gradient.stops[1].color, expected.body);
-        assert_eq!(gradient.stops[2].color, expected.saturated);
-        assert_eq!(gradient.stops[3].color, expected.shifted);
-        assert_eq!(gradient.stops[4].color, expected.end);
+        assert_eq!(gradient.stops[2].color, expected.body);
+        assert_eq!(gradient.stops[3].color, expected.saturated);
+        assert_eq!(gradient.stops[4].color, expected.shifted);
+        assert_eq!(gradient.stops[5].color, expected.end);
     }
 
     fn find_node_with_gradient(node: &RenderNode) -> Option<&RenderNode> {
