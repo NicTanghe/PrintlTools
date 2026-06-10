@@ -239,10 +239,11 @@
     width: 24px;
     height: 100%;
     background: linear-gradient(
-        180deg,
-        var(--tool-accent-start) 0%,
-        var(--tool-accent-saturated) 38%,
-        var(--tool-accent-cooling) 72%,
+        0deg,
+        var(--tool-accent-shadow) 0%,
+        var(--tool-accent-body) 18%,
+        var(--tool-accent-saturated) 55%,
+        var(--tool-accent-shifted) 83%,
         var(--tool-accent-end) 100%
     );
     border-radius: 9px;

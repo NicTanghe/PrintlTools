@@ -1116,9 +1116,10 @@ fn tool_button_variant_class(id: ToolId) -> &'static str {
 
 #[derive(Clone, Copy)]
 struct AccentGradient {
-    start: Color,
+    shadow: Color,
+    body: Color,
     saturated: Color,
-    cooling: Color,
+    shifted: Color,
     end: Color,
 }
 
@@ -1127,13 +1128,16 @@ fn tool_accent_style(id: ToolId) -> Style {
     let mut style = Style::default();
     style
         .custom_properties
-        .set("--tool-accent-start", color_css(gradient.start));
+        .set("--tool-accent-shadow", color_css(gradient.shadow));
+    style
+        .custom_properties
+        .set("--tool-accent-body", color_css(gradient.body));
     style
         .custom_properties
         .set("--tool-accent-saturated", color_css(gradient.saturated));
     style
         .custom_properties
-        .set("--tool-accent-cooling", color_css(gradient.cooling));
+        .set("--tool-accent-shifted", color_css(gradient.shifted));
     style
         .custom_properties
         .set("--tool-accent-end", color_css(gradient.end));
@@ -1150,30 +1154,36 @@ fn tool_accent_base(id: ToolId) -> Color {
 
 fn generated_accent_gradient(base: Color) -> AccentGradient {
     let base = HsvColor::from_color(base);
-    let cold_hue = cooler_hue(base.hue);
+    let shifted_hue = accent_target_hue(base.hue);
 
     AccentGradient {
-        start: HsvColor {
-            hue: lerp_hue(base.hue, cold_hue, 0.16),
-            saturation: base.saturation.max(0.78),
-            value: 0.70,
+        shadow: HsvColor {
+            hue: lerp_hue(base.hue, shifted_hue, 0.04),
+            saturation: base.saturation.max(0.72),
+            value: 0.62,
+        }
+        .to_color(),
+        body: HsvColor {
+            hue: lerp_hue(base.hue, shifted_hue, 0.14),
+            saturation: 0.92,
+            value: 0.90,
         }
         .to_color(),
         saturated: HsvColor {
-            hue: lerp_hue(base.hue, cold_hue, 0.38),
+            hue: lerp_hue(base.hue, shifted_hue, 0.34),
             saturation: 1.0,
             value: 1.0,
         }
         .to_color(),
-        cooling: HsvColor {
-            hue: lerp_hue(base.hue, cold_hue, 0.72),
-            saturation: 0.78,
+        shifted: HsvColor {
+            hue: lerp_hue(base.hue, shifted_hue, 0.72),
+            saturation: 0.86,
             value: 1.0,
         }
         .to_color(),
         end: HsvColor {
-            hue: cold_hue,
-            saturation: 0.50,
+            hue: shifted_hue,
+            saturation: 0.56,
             value: 1.0,
         }
         .to_color(),
@@ -1247,8 +1257,14 @@ impl HsvColor {
     }
 }
 
-fn cooler_hue(hue: f32) -> f32 {
-    if hue > 240.0 { hue - 26.0 } else { hue + 26.0 }
+fn accent_target_hue(hue: f32) -> f32 {
+    if hue >= 245.0 {
+        hue + 42.0
+    } else if hue >= 185.0 {
+        hue - 30.0
+    } else {
+        hue + 24.0
+    }
 }
 
 fn lerp_hue(from: f32, to: f32, amount: f32) -> f32 {
@@ -1644,10 +1660,11 @@ mod tests {
             panic!("tool accent should use a linear gradient");
         };
         let expected = super::generated_accent_gradient(Color::rgb(34, 135, 214));
-        assert_eq!(gradient.stops[0].color, expected.start);
-        assert_eq!(gradient.stops[1].color, expected.saturated);
-        assert_eq!(gradient.stops[2].color, expected.cooling);
-        assert_eq!(gradient.stops[3].color, expected.end);
+        assert_eq!(gradient.stops[0].color, expected.shadow);
+        assert_eq!(gradient.stops[1].color, expected.body);
+        assert_eq!(gradient.stops[2].color, expected.saturated);
+        assert_eq!(gradient.stops[3].color, expected.shifted);
+        assert_eq!(gradient.stops[4].color, expected.end);
     }
 
     fn find_node_with_gradient(node: &RenderNode) -> Option<&RenderNode> {
