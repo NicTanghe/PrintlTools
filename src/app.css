@@ -5,6 +5,10 @@
     overflow: hidden;
     native-material: glass;
     glass-tint: rgba(226, 238, 246, 0.72);
+    --glass-inward-glow-color: hsla(0, 0%, 100%, 0.2);
+    --glass-inward-glow:
+        inset 0px 0px 7px 0px var(--glass-inward-glow-color),
+        inset 0px 1px 3px 0px var(--glass-inward-glow-color);
     background: rgb(224, 239, 247);
     color: rgb(20, 29, 40);
     font-family: "Segoe UI";
@@ -200,10 +204,12 @@
     padding: 18px 24px 18px 32px;
     margin-left: -4px;
     color: rgb(21, 32, 45);
-    background: rgb(238, 246, 250);
-    border: 1px solid rgb(250, 253, 255);
+    background: rgba(247, 251, 254, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0);
     border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(43, 63, 76, 0.08);
+    box-shadow:
+        var(--glass-inward-glow),
+        0px 12px 28px rgba(43, 63, 76, 0.1);
     overflow: hidden;
 }
 
@@ -214,21 +220,23 @@
     display: block;
     width: calc(100% - 14px);
     height: 100%;
-    background: rgb(238, 246, 250);
-    border: 1px solid rgb(250, 253, 255);
+    background: rgba(247, 251, 254, 0.42);
+    backdrop-occlude: scene;
+    border: 1px solid rgba(255, 255, 255, 0);
     border-radius: 8px;
-    box-shadow: 0 4px 12px rgba(43, 63, 76, 0.08);
+    box-shadow:
+        var(--glass-inward-glow),
+        0px 12px 28px rgba(43, 63, 76, 0.1);
+    overflow: hidden;
     z-index: 1;
 }
 
 .tool-button:hover .tool-surface {
-    background: rgb(248, 252, 255);
-    border: 1px solid rgb(130, 178, 210);
+    background: rgba(255, 255, 255, 0.56);
 }
 
 .drive-button:hover {
-    background: rgb(248, 252, 255);
-    border: 1px solid rgb(130, 178, 210);
+    background: rgba(255, 255, 255, 0.56);
 }
 
 .tool-accent {
@@ -259,8 +267,8 @@
     height: 76px;
     justify-content: center;
     align-items: center;
-    background: rgb(246, 251, 254);
-    border: 1px solid rgb(179, 199, 214);
+    background: rgba(248, 252, 255, 0.48);
+    border: 1px solid rgba(255, 255, 255, 0.76);
     border-radius: 8px;
     box-shadow: 0 4px 10px rgba(44, 63, 78, 0.08);
     z-index: 2;
@@ -379,25 +387,26 @@
 }
 
 .tool-button.disabled .tool-surface {
-    background: rgba(224, 234, 240, 0.42);
-    border: 1px solid rgba(164, 178, 188, 0.58);
+    background: rgba(224, 234, 240, 0.34);
+    border: 1px solid rgba(255, 255, 255, 0);
 }
 
 .nav-button,
 .action-button {
     display: flex;
+    position: relative;
     height: 44px;
     justify-content: center;
     align-items: center;
     gap: 9px;
     padding: 0px 14px;
     color: rgb(247, 251, 255);
-    background: rgba(87, 106, 125, 0.76);
-    border: 1px solid rgb(222, 238, 248);
+    background: rgba(92, 111, 130, 0.46);
+    border: 1px solid rgba(255, 255, 255, 0);
     border-radius: 8px;
     font-size: 14px;
     font-weight: 800;
-    box-shadow: 0 10px 24px rgba(37, 54, 70, 0.2);
+    box-shadow: 0px 12px 28px rgba(37, 54, 70, 0.2);
     overflow: hidden;
 }
 
@@ -407,45 +416,55 @@
 
 .action-button {
     width: 184px;
+    box-shadow:
+        var(--glass-inward-glow),
+        0px 12px 28px rgba(37, 54, 70, 0.2);
 }
 
 .nav-button:hover,
 .action-button:hover {
-    background: rgba(74, 92, 110, 0.84);
-    border: 1px solid rgb(238, 248, 255);
+    background: rgba(102, 123, 142, 0.58);
 }
 
 .nav-button.danger,
 .action-button.danger {
     width: 112px;
     color: rgb(255, 250, 252);
-    background: rgba(210, 58, 96, 0.86);
-    border: 1px solid rgb(255, 226, 236);
-    box-shadow: 0 12px 28px rgba(190, 45, 84, 0.28);
+    background: rgba(210, 58, 96, 0.64);
+    border: 1px solid rgba(255, 255, 255, 0);
+    box-shadow: 0px 12px 28px rgba(190, 45, 84, 0.28);
+}
+
+.action-button.danger {
+    box-shadow:
+        var(--glass-inward-glow),
+        0px 12px 28px rgba(190, 45, 84, 0.28);
 }
 
 .nav-button.danger:hover,
 .action-button.danger:hover {
-    background: rgba(186, 45, 80, 0.92);
+    background: rgba(210, 58, 96, 0.74);
 }
 
 .nav-button.selected {
     color: rgb(255, 255, 255);
-    background: rgba(38, 130, 205, 0.86);
-    border: 1px solid rgb(226, 242, 252);
-    box-shadow: 0 12px 28px rgba(35, 113, 178, 0.28);
+    background: rgba(38, 130, 205, 0.64);
+    border: 1px solid rgba(255, 255, 255, 0);
+    box-shadow: 0px 12px 28px rgba(35, 113, 178, 0.28);
 }
 
 .nav-button.selected:hover {
-    background: rgba(30, 113, 184, 0.92);
+    background: rgba(38, 130, 205, 0.74);
 }
 
 .button-icon {
     display: flex;
+    position: relative;
     width: 19px;
     height: 19px;
     justify-content: center;
     align-items: center;
+    z-index: 1;
 }
 
 .button-icon .svg-icon {
@@ -455,7 +474,9 @@
 
 .button-text {
     display: block;
+    position: relative;
     line-height: 1.15;
+    z-index: 1;
 }
 
 .nav-button .button-text {
@@ -476,27 +497,29 @@
 
 .toggle-button {
     display: flex;
+    position: relative;
     width: 100%;
     min-height: 58px;
     align-items: center;
     gap: 22px;
     padding: 11px 16px;
     color: rgb(24, 36, 48);
-    background: rgba(247, 251, 253, 0.46);
-    border: 1px solid rgba(255, 255, 255, 0.88);
+    background: rgba(247, 251, 253, 0.42);
+    border: 1px solid rgba(255, 255, 255, 0);
     border-radius: 8px;
-    box-shadow: 0 12px 28px rgba(43, 63, 76, 0.1);
+    box-shadow:
+        var(--glass-inward-glow),
+        0px 12px 28px rgba(43, 63, 76, 0.1);
     overflow: hidden;
 }
 
 .toggle-button:hover {
-    background: rgba(255, 255, 255, 0.62);
-    border: 1px solid rgba(45, 116, 166, 0.42);
+    background: rgba(255, 255, 255, 0.56);
 }
 
 .toggle-button.selected {
     background: rgba(224, 245, 255, 0.56);
-    border: 1px solid rgba(58, 143, 190, 0.44);
+    border: 1px solid rgba(255, 255, 255, 0);
 }
 
 .toggle-track {
@@ -512,6 +535,7 @@
     border: 1px solid rgba(255, 255, 255, 0.82);
     border-radius: 16px;
     box-shadow: 0 6px 14px rgba(45, 62, 78, 0.18);
+    z-index: 1;
 }
 
 .toggle-button.selected .toggle-track {
@@ -556,9 +580,11 @@
 }
 
 .toggle-label {
+    position: relative;
     color: rgb(24, 36, 48);
     font-size: 15px;
     font-weight: 700;
+    z-index: 1;
 }
 
 .empty-state {
@@ -569,9 +595,11 @@
     align-items: center;
     color: rgb(132, 149, 164);
     background: rgba(247, 251, 253, 0.42);
-    border: 1px solid rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(255, 255, 255, 0);
     border-radius: 8px;
-    box-shadow: 0 10px 24px rgba(43, 63, 76, 0.08);
+    box-shadow:
+        var(--glass-inward-glow),
+        0px 10px 24px rgba(43, 63, 76, 0.08);
 }
 
 .empty-state .svg-icon {
@@ -588,7 +616,9 @@
     padding: 18px;
     background: rgba(247, 251, 253, 0.52);
     border-radius: 8px;
-    box-shadow: 0 12px 28px rgba(43, 63, 76, 0.1);
+    box-shadow:
+        var(--glass-inward-glow),
+        0px 12px 28px rgba(43, 63, 76, 0.1);
 }
 
 .result-panel-info {
@@ -638,40 +668,30 @@
 
 .segment-button {
     display: flex;
+    position: relative;
     width: 52px;
     height: 36px;
     justify-content: center;
     align-items: center;
     padding: 0px 10px;
     color: rgb(247, 251, 254);
-    background: linear-gradient(
-        145deg,
-        rgb(109, 126, 144) 0%,
-        rgb(78, 94, 111) 100%
-    );
-    border: 1px solid rgba(255, 255, 255, 0.7);
+    background: rgba(92, 111, 130, 0.46);
+    border: 1px solid rgba(255, 255, 255, 0);
     border-radius: 8px;
     font-size: 13px;
     font-weight: 800;
+    box-shadow: var(--glass-inward-glow);
     overflow: hidden;
 }
 
 .segment-button:hover {
-    background: linear-gradient(
-        145deg,
-        rgb(96, 114, 132) 0%,
-        rgb(67, 84, 101) 100%
-    );
+    background: rgba(102, 123, 142, 0.58);
 }
 
 .segment-button.selected {
     color: rgb(255, 255, 255);
-    background: linear-gradient(
-        145deg,
-        rgb(54, 156, 219) 0%,
-        rgb(34, 114, 185) 100%
-    );
-    border: 1px solid rgba(255, 255, 255, 0.86);
+    background: rgba(38, 130, 205, 0.64);
+    border: 1px solid rgba(255, 255, 255, 0);
 }
 
 .processing-panel {

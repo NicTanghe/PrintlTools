@@ -1,12 +1,17 @@
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::process;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use cssimpler::app::{App, Invalidation};
-use cssimpler::core::{Color, ElementInteractionState, Node, RenderNode, Style};
-use cssimpler::renderer::{FrameInfo, RedrawSchedule, SceneProvider, ViewportSize, WindowConfig};
+use cssimpler::app::{App, Invalidation, latest_runtime_stats};
+use cssimpler::core::{Color, ElementInteractionState, ElementPath, Node, RenderNode, Style};
+use cssimpler::renderer::{
+    FrameInfo, RedrawSchedule, SceneProvider, ViewportSize, WindowConfig, latest_frame_timing_stats,
+};
 use cssimpler::style::{Stylesheet, parse_stylesheet};
 use cssimpler::ui;
 
@@ -19,6 +24,8 @@ use crate::tray::{self, TrayEvent};
 use crate::usb::{self, DriveInfo};
 
 const MAX_USB_DRIVE_BUTTONS: usize = 16;
+const PROFILE_ENV_VAR: &str = "PRINTLTOOLS_PROFILE";
+const PROFILE_PATH_ENV_VAR: &str = "PRINTLTOOLS_PROFILE_PATH";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -100,6 +107,7 @@ static UI_COMMANDS: OnceLock<Mutex<Vec<UiCommand>>> = OnceLock::new();
 pub fn run() -> cssimpler::renderer::Result<()> {
     let app = PollingSceneProvider {
         inner: App::new(PrintLTools::new(), stylesheet(), update, view),
+        profiler: FrameProfiler::from_env(),
     };
 
     cssimpler::renderer::run_with_scene_provider(
@@ -116,6 +124,7 @@ pub fn run() -> cssimpler::renderer::Result<()> {
 
 struct PollingSceneProvider<P> {
     inner: P,
+    profiler: FrameProfiler,
 }
 
 impl<P> SceneProvider for PollingSceneProvider<P>
@@ -123,6 +132,7 @@ where
     P: SceneProvider,
 {
     fn update(&mut self, frame: FrameInfo) {
+        self.profiler.record_frame(frame);
         self.inner.update(frame);
     }
 
@@ -135,6 +145,7 @@ where
     }
 
     fn set_element_interaction(&mut self, interaction: ElementInteractionState) -> bool {
+        self.profiler.record_interaction(&interaction);
         self.inner.set_element_interaction(interaction)
     }
 
@@ -145,6 +156,154 @@ where
     fn needs_redraw(&self) -> bool {
         self.inner.needs_redraw()
     }
+}
+
+struct FrameProfiler {
+    writer: Option<BufWriter<File>>,
+    started_at: Instant,
+    sample_index: u64,
+    current_interaction: ElementInteractionState,
+    interaction_changed: bool,
+}
+
+impl FrameProfiler {
+    fn from_env() -> Self {
+        let writer = std::env::var_os(PROFILE_ENV_VAR).and_then(|_| {
+            let path = std::env::var_os(PROFILE_PATH_ENV_VAR)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    std::env::temp_dir()
+                        .join(format!("printltools-frame-profile-{}.csv", process::id()))
+                });
+            let file = File::create(&path);
+            match file {
+                Ok(file) => {
+                    eprintln!("PrintLTools frame profile: {}", path.display());
+                    let mut writer = BufWriter::new(file);
+                    if let Err(error) = writeln!(
+                        writer,
+                        "sample_index,elapsed_ms,frame_index,frame_delta_us,hovered,active,interaction_changed,runtime_view_us,runtime_render_tree_us,runtime_scene_swap_us,runtime_transition_us,runtime_structural_update_us,runtime_interaction_us,runtime_style_resolution_us,runtime_layout_sync_us,runtime_render_extraction_us,runtime_rerendered,runtime_transition_active,frame_update_us,frame_scene_prep_us,frame_paint_us,frame_present_us,frame_total_us,render_workers,dirty_regions,dirty_jobs,damage_pixels,painted_pixels,scene_passes,paint_mode,paint_reason"
+                    ) {
+                        eprintln!("PrintLTools frame profile header failed: {error}");
+                        None
+                    } else if let Err(error) = writer.flush() {
+                        eprintln!("PrintLTools frame profile header flush failed: {error}");
+                        None
+                    } else {
+                        Some(writer)
+                    }
+                }
+                Err(error) => {
+                    eprintln!(
+                        "PrintLTools frame profile could not create {}: {error}",
+                        path.display()
+                    );
+                    None
+                }
+            }
+        });
+
+        Self {
+            writer,
+            started_at: Instant::now(),
+            sample_index: 0,
+            current_interaction: ElementInteractionState::default(),
+            interaction_changed: false,
+        }
+    }
+
+    fn record_interaction(&mut self, interaction: &ElementInteractionState) {
+        if self.current_interaction == *interaction {
+            return;
+        }
+
+        self.current_interaction = interaction.clone();
+        self.interaction_changed = true;
+    }
+
+    fn record_frame(&mut self, frame: FrameInfo) {
+        let Some(writer) = self.writer.as_mut() else {
+            return;
+        };
+
+        let runtime = latest_runtime_stats();
+        let timing = latest_frame_timing_stats();
+        let elapsed_ms = self.started_at.elapsed().as_millis();
+        let interaction_changed = self.interaction_changed;
+        self.interaction_changed = false;
+
+        let result = writeln!(
+            writer,
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:?},{:?}",
+            self.sample_index,
+            elapsed_ms,
+            frame.frame_index,
+            frame.delta.as_micros(),
+            format_element_path(&self.current_interaction.hovered),
+            format_element_path(&self.current_interaction.active),
+            interaction_changed,
+            runtime.view_us,
+            runtime.render_tree_us,
+            runtime.scene_swap_us,
+            runtime.transition_us,
+            runtime.structural_update_us,
+            runtime.interaction_us,
+            runtime.style_resolution_us,
+            runtime.layout_sync_us,
+            runtime.render_extraction_us,
+            runtime.rerendered,
+            runtime.transition_active,
+            timing.update_us,
+            timing.scene_prep_us,
+            timing.paint_us,
+            timing.present_us,
+            timing.total_us,
+            timing.render_workers,
+            timing.dirty_regions,
+            timing.dirty_jobs,
+            timing.damage_pixels,
+            timing.painted_pixels,
+            timing.scene_passes,
+            timing.paint_mode,
+            timing.paint_reason
+        );
+
+        if let Err(error) = result {
+            eprintln!("PrintLTools frame profile write failed: {error}");
+            self.writer = None;
+            return;
+        }
+
+        self.sample_index = self.sample_index.saturating_add(1);
+        if self.sample_index % 60 == 0
+            && let Some(writer) = self.writer.as_mut()
+            && let Err(error) = writer.flush()
+        {
+            eprintln!("PrintLTools frame profile flush failed: {error}");
+            self.writer = None;
+        }
+    }
+}
+
+impl Drop for FrameProfiler {
+    fn drop(&mut self) {
+        if let Some(writer) = self.writer.as_mut() {
+            let _ = writer.flush();
+        }
+    }
+}
+
+fn format_element_path(path: &Option<ElementPath>) -> String {
+    let Some(path) = path else {
+        return String::new();
+    };
+
+    let mut value = path.root.to_string();
+    for child in &path.children {
+        value.push('.');
+        value.push_str(&child.to_string());
+    }
+    value
 }
 
 impl PrintLTools {
