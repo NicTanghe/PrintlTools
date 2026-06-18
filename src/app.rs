@@ -472,7 +472,6 @@ fn handle_tray_event(state: &mut PrintLTools, event: TrayEvent) -> bool {
             state.view = View::Settings;
             true
         }
-        TrayEvent::Exit => quit(),
         TrayEvent::Error(error) => record_result(
             state,
             ToolResult::error(
@@ -507,11 +506,6 @@ fn minimize_to_tray(state: &mut PrintLTools) -> bool {
             ),
         ),
     }
-}
-
-fn quit() -> bool {
-    tray::shutdown();
-    std::process::exit(0);
 }
 
 fn start_tool(state: &mut PrintLTools, id: ToolId) -> bool {

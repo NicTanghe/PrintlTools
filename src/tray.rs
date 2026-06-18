@@ -2,7 +2,6 @@
 pub enum TrayEvent {
     OpenLauncher,
     OpenSettings,
-    Exit,
     Error(String),
 }
 
@@ -10,10 +9,6 @@ pub fn spawn_events() -> Result<std::sync::mpsc::Receiver<TrayEvent>, String> {
     let (sender, receiver) = std::sync::mpsc::channel();
     platform::spawn(sender)?;
     Ok(receiver)
-}
-
-pub fn shutdown() {
-    platform::shutdown();
 }
 
 fn tray_notification_code(lparam: isize) -> u32 {
@@ -37,31 +32,26 @@ mod platform {
     use windows::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
         DispatchMessageW, GetCursorPos, GetMessageW, HMENU, IDI_APPLICATION, LoadIconW, MF_STRING,
-        MSG, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, TPM_LEFTALIGN,
-        TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP, WM_CLOSE, WM_COMMAND, WM_CREATE,
-        WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW,
-        WS_OVERLAPPED,
+        MSG, PostQuitMessage, RegisterClassW, SetForegroundWindow, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
+        TrackPopupMenu, TranslateMessage, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_LBUTTONUP,
+        WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
     };
     use windows::core::w;
 
     use super::{TrayEvent, tray_notification_code};
 
     const WM_TRAYICON: u32 = WM_USER + 1;
-    const WM_TRAY_SHUTDOWN: u32 = WM_APP + 1;
     const TRAY_UID: u32 = 1;
     const MENU_OPEN: usize = 1001;
     const MENU_SETTINGS: usize = 1002;
     const MENU_EXIT: usize = 1003;
 
     static TRAY_SENDER: OnceLock<Mutex<Sender<TrayEvent>>> = OnceLock::new();
-    static TRAY_HWND: OnceLock<Mutex<Option<isize>>> = OnceLock::new();
 
     pub fn spawn(sender: Sender<TrayEvent>) -> Result<(), String> {
         if TRAY_SENDER.set(Mutex::new(sender)).is_err() {
             return Ok(());
         }
-
-        let _ = TRAY_HWND.set(Mutex::new(None));
 
         thread::Builder::new()
             .name("printltools-tray".to_string())
@@ -72,21 +62,6 @@ mod platform {
             })
             .map(|_| ())
             .map_err(|error| format!("Failed to start tray thread: {error}"))
-    }
-
-    pub fn shutdown() {
-        let Some(hwnd) = TRAY_HWND
-            .get()
-            .and_then(|hwnd| hwnd.lock().ok())
-            .and_then(|hwnd| *hwnd)
-        else {
-            return;
-        };
-        let hwnd = HWND(hwnd as *mut core::ffi::c_void);
-
-        unsafe {
-            let _ = PostMessageW(Some(hwnd), WM_TRAY_SHUTDOWN, WPARAM(0), LPARAM(0));
-        }
     }
 
     unsafe fn run_tray_loop() -> Result<(), String> {
@@ -127,12 +102,6 @@ mod platform {
         }
         .map_err(|error| format!("CreateWindowExW failed: {error}"))?;
 
-        if let Some(store) = TRAY_HWND.get() {
-            if let Ok(mut store) = store.lock() {
-                *store = Some(hwnd.0 as isize);
-            }
-        }
-
         unsafe { add_icon(hwnd)? };
 
         let mut message = MSG::default();
@@ -144,11 +113,6 @@ mod platform {
         }
 
         unsafe { remove_icon(hwnd) };
-        if let Some(store) = TRAY_HWND.get() {
-            if let Ok(mut store) = store.lock() {
-                *store = None;
-            }
-        }
         Ok(())
     }
 
@@ -173,16 +137,10 @@ mod platform {
                 match wparam.0 & 0xffff {
                     MENU_OPEN => restore_and_send(TrayEvent::OpenLauncher),
                     MENU_SETTINGS => restore_and_send(TrayEvent::OpenSettings),
-                    MENU_EXIT => send(TrayEvent::Exit),
+                    MENU_EXIT => exit_process(hwnd),
                     _ => {}
                 }
 
-                LRESULT(0)
-            }
-            WM_TRAY_SHUTDOWN => {
-                unsafe {
-                    let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
-                }
                 LRESULT(0)
             }
             WM_DESTROY => {
@@ -218,6 +176,11 @@ mod platform {
     unsafe fn remove_icon(hwnd: HWND) {
         let data = notify_icon_data(hwnd);
         let _ = unsafe { Shell_NotifyIconW(NIM_DELETE, &data) };
+    }
+
+    fn exit_process(hwnd: HWND) -> ! {
+        unsafe { remove_icon(hwnd) };
+        std::process::exit(0);
     }
 
     fn notify_icon_data(hwnd: HWND) -> NOTIFYICONDATAW {
@@ -303,8 +266,6 @@ mod platform {
     pub fn spawn(_sender: Sender<TrayEvent>) -> Result<(), String> {
         Err("Tray integration is only implemented on Windows.".to_string())
     }
-
-    pub fn shutdown() {}
 }
 
 #[cfg(test)]
