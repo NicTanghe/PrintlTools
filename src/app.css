@@ -287,29 +287,6 @@
     color: rgb(103, 80, 190);
 }
 
-.tool-icon .svg-icon,
-.drive-icon .svg-icon {
-    width: 44px;
-    height: 44px;
-}
-
-.pdf-badge {
-    position: absolute;
-    left: 17px;
-    top: 44px;
-    display: flex;
-    width: 42px;
-    height: 18px;
-    justify-content: center;
-    align-items: center;
-    color: rgb(255, 255, 255);
-    background: rgb(103, 80, 190);
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 800;
-    line-height: 1;
-}
-
 .tool-copy,
 .drive-copy {
     display: flex;
@@ -706,4 +683,10 @@
     fill: none;
     stroke: currentColor;
     stroke-width: 2px;
+}
+
+.tool-icon .svg-icon,
+.drive-icon .svg-icon {
+    width: 56px;
+    height: 56px;
 }

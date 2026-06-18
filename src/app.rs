@@ -1435,7 +1435,7 @@ fn color_css(color: Color) -> String {
 }
 
 fn tool_icon(id: ToolId) -> Node {
-    let mut tile = Node::element("span")
+    let tile = Node::element("span")
         .with_class("tool-icon")
         .with_class(match id {
             ToolId::FolderPageCounter => "folder",
@@ -1445,17 +1445,8 @@ fn tool_icon(id: ToolId) -> Node {
         .with_child(match id {
             ToolId::FolderPageCounter => icon_folder(),
             ToolId::UsbSafeEject => icon_usb(),
-            ToolId::PdfJoiner => icon_document(),
+            ToolId::PdfJoiner => icon_pdf_document(),
         });
-
-    if id == ToolId::PdfJoiner {
-        tile = tile.with_child(
-            Node::element("span")
-                .with_class("pdf-badge")
-                .with_child(Node::text("PDF"))
-                .into(),
-        );
-    }
 
     tile.into()
 }
@@ -1474,25 +1465,191 @@ fn icon_document() -> Node {
     )
 }
 
+fn icon_pdf_document() -> Node {
+    let gradient = generated_accent_gradient(tool_accent_base(ToolId::PdfJoiner));
+    let stroke_width = "1.35";
+
+    Node::element("svg")
+        .with_class("svg-icon")
+        .with_class("icon-pdf-document")
+        .with_attribute("xmlns", "http://www.w3.org/2000/svg")
+        .with_attribute("viewBox", "0 0 24 24")
+        .with_child(
+            Node::element("defs")
+                .with_child(
+                    Node::element("linearGradient")
+                        .with_id("pdf-accent-gradient")
+                        .with_attribute("x1", "0")
+                        .with_attribute("y1", "24")
+                        .with_attribute("x2", "0")
+                        .with_attribute("y2", "0")
+                        .with_attribute("gradientUnits", "userSpaceOnUse")
+                        .with_child(svg_gradient_stop("0%", gradient.shadow).into())
+                        .with_child(svg_gradient_stop("14%", gradient.body).into())
+                        .with_child(svg_gradient_stop("54%", gradient.body).into())
+                        .with_child(svg_gradient_stop("82%", gradient.saturated).into())
+                        .with_child(svg_gradient_stop("93%", gradient.shifted).into())
+                        .with_child(svg_gradient_stop("97%", gradient.end).into())
+                        .into(),
+                )
+                .into(),
+        )
+        .with_child(
+            Node::element("path")
+                .with_attribute(
+                    "d",
+                    "M6.45 12.45 V3.9 C6.45 3.22 7 2.68 7.68 2.68 H14.35 C14.72 2.68 15.08 2.83 15.34 3.09 L18.96 6.71 C19.22 6.97 19.37 7.33 19.37 7.7 V20.18 C19.37 20.86 18.82 21.4 18.14 21.4 H16.6",
+                )
+                .with_attribute("fill", "none")
+                .with_attribute("stroke", "url(#pdf-accent-gradient)")
+                .with_attribute("stroke-width", stroke_width)
+                .with_attribute("stroke-linecap", "round")
+                .with_attribute("stroke-linejoin", "round")
+                .into(),
+        )
+        .with_child(
+            Node::element("path")
+                .with_attribute("d", "M14.35 2.85 V6.65 C14.35 7.08 14.7 7.43 15.13 7.43 H19.18")
+                .with_attribute("fill", "none")
+                .with_attribute("stroke", "url(#pdf-accent-gradient)")
+                .with_attribute("stroke-width", stroke_width)
+                .with_attribute("stroke-linecap", "round")
+                .with_attribute("stroke-linejoin", "round")
+                .into(),
+        )
+        .with_child(
+            Node::element("path")
+                .with_attribute(
+                    "d",
+                    "M2.85 13.55 H15.05 C15.5 13.55 15.86 13.91 15.86 14.36 V19.42 C15.86 19.87 15.5 20.23 15.05 20.23 H2.85 C2.4 20.23 2.04 19.87 2.04 19.42 V14.36 C2.04 13.91 2.4 13.55 2.85 13.55 Z M3.35 15.05 V18.85 H4.42 V17.55 H5.64 C6.6 17.55 7.18 17.08 7.18 16.28 C7.18 15.48 6.6 15.05 5.64 15.05 H3.35 Z M4.42 15.88 H5.5 C5.92 15.88 6.14 16.03 6.14 16.29 C6.14 16.56 5.92 16.72 5.5 16.72 H4.42 Z M7.75 15.05 V18.85 H9.28 C10.58 18.85 11.42 18.1 11.42 16.95 C11.42 15.8 10.58 15.05 9.28 15.05 H7.75 Z M8.82 15.9 H9.2 C9.9 15.9 10.34 16.3 10.34 16.95 C10.34 17.6 9.9 18 9.2 18 H8.82 Z M12 15.05 V18.85 H13.07 V17.48 H14.7 V16.62 H13.07 V15.93 H15.08 V15.05 H12 Z",
+                )
+                .with_attribute("fill", "url(#pdf-accent-gradient)")
+                .with_attribute("stroke", "none")
+                .into(),
+        )
+        .into()
+}
+
+const FOLDER_ICON_STROKE_WIDTH: &str = "1.15";
+
 fn icon_folder() -> Node {
-    svg_icon(
-        "icon-folder",
-        &["M3 7 L9 7 L11 9 L21 9 L21 19 L3 19 Z", "M3 7 L3 19"],
-        &[],
-    )
+    let gradient = generated_accent_gradient(tool_accent_base(ToolId::FolderPageCounter));
+    let stroke_width = FOLDER_ICON_STROKE_WIDTH;
+
+    Node::element("svg")
+        .with_class("svg-icon")
+        .with_class("icon-folder")
+        .with_attribute("xmlns", "http://www.w3.org/2000/svg")
+        .with_attribute("viewBox", "0 0 24 24")
+        .with_child(
+            Node::element("defs")
+                .with_child(
+                    Node::element("linearGradient")
+                        .with_id("folder-accent-gradient")
+                        .with_attribute("x1", "0")
+                        .with_attribute("y1", "24")
+                        .with_attribute("x2", "0")
+                        .with_attribute("y2", "0")
+                        .with_attribute("gradientUnits", "userSpaceOnUse")
+                        .with_child(svg_gradient_stop("0%", gradient.shadow).into())
+                        .with_child(svg_gradient_stop("14%", gradient.body).into())
+                        .with_child(svg_gradient_stop("54%", gradient.body).into())
+                        .with_child(svg_gradient_stop("82%", gradient.saturated).into())
+                        .with_child(svg_gradient_stop("93%", gradient.shifted).into())
+                        .with_child(svg_gradient_stop("97%", gradient.end).into())
+                        .into(),
+                )
+                .into(),
+        )
+        .with_child(
+            Node::element("path")
+                .with_attribute(
+                    "d",
+                    "M20 9 V6.47214 C20 6.16165 19.92771 5.85542 19.78885 5.57771 L19 4 H14 L13 6 H3 C2.4477 6 2 6.44772 2 7 V9 V18 C2 19.1046 2.8954 20 4 20 H6",
+                )
+                .with_attribute("fill", "none")
+                .with_attribute("stroke", "url(#folder-accent-gradient)")
+                .with_attribute("stroke-width", stroke_width)
+                .with_attribute("stroke-linecap", "round")
+                .with_attribute("stroke-linejoin", "round")
+                .into(),
+        )
+        .with_child(
+            Node::element("path")
+                .with_attribute(
+                    "d",
+                    "M6.7638 9 H21.69075 C22.35012 9 22.82901 9.62698 22.65551 10.2631 L20.40194 18.5262 C20.16463 19.3964 19.37431 20 18.47241 20 H4.3092 C3.6499 20 3.171 19.373 3.3445 18.7369 L5.799 9.73688 C5.9177 9.30182 6.3128 9 6.7638 9 Z",
+                )
+                .with_attribute("fill", "none")
+                .with_attribute("stroke", "url(#folder-accent-gradient)")
+                .with_attribute("stroke-width", stroke_width)
+                .with_attribute("stroke-linecap", "round")
+                .with_attribute("stroke-linejoin", "round")
+                .into(),
+        )
+        .into()
+}
+
+fn svg_gradient_stop(offset: &'static str, color: Color) -> Node {
+    Node::element("stop")
+        .with_attribute("offset", offset)
+        .with_attribute("stop-color", color_css(color))
+        .into()
 }
 
 fn icon_usb() -> Node {
-    svg_icon(
-        "icon-usb",
-        &[
-            "M12 3 L12 15",
-            "M8 7 L12 3 L16 7",
-            "M6 11 L18 11",
-            "M8 11 L8 16 L12 20 L16 16 L16 11",
-        ],
-        &[],
-    )
+    let gradient = generated_accent_gradient(tool_accent_base(ToolId::UsbSafeEject));
+
+    Node::element("svg")
+        .with_class("svg-icon")
+        .with_class("icon-usb")
+        .with_attribute("xmlns", "http://www.w3.org/2000/svg")
+        .with_attribute("viewBox", "0 0 2796 2796")
+        .with_child(
+            Node::element("defs")
+                .with_child(
+                    Node::element("linearGradient")
+                        .with_id("usb-accent-gradient")
+                        .with_attribute("x1", "0")
+                        .with_attribute("y1", "2796")
+                        .with_attribute("x2", "0")
+                        .with_attribute("y2", "0")
+                        .with_attribute("gradientUnits", "userSpaceOnUse")
+                        .with_child(svg_gradient_stop("0%", gradient.shadow).into())
+                        .with_child(svg_gradient_stop("14%", gradient.body).into())
+                        .with_child(svg_gradient_stop("54%", gradient.body).into())
+                        .with_child(svg_gradient_stop("82%", gradient.saturated).into())
+                        .with_child(svg_gradient_stop("93%", gradient.shifted).into())
+                        .with_child(svg_gradient_stop("97%", gradient.end).into())
+                        .into(),
+                )
+                .into(),
+        )
+        .with_child(svg_filled_gradient_path(
+            "usb-accent-gradient",
+            "M1520.24,1431.93 H1562.96 V1517.79 C1562.96,1542.67 1552.38,1566.52 1533.93,1583.22 L1415.64,1690.29 V1222.38 H1467.58 L1398.24,1102.28 L1328.9,1222.38 H1380.84 V1840.52 L1262.55,1733.45 C1244.1,1716.75 1233.52,1692.9 1233.52,1668.02 V1580.06 C1258.49,1572.58 1276.7,1549.45 1276.7,1522.04 C1276.7,1488.58 1249.58,1461.46 1216.12,1461.46 C1182.66,1461.46 1155.54,1488.58 1155.54,1522.04 C1155.54,1549.45 1173.75,1572.58 1198.72,1580.06 V1668.02 C1198.72,1702.71 1213.47,1735.96 1239.19,1759.24 L1380.83,1887.45 V1985.03 C1333.59,1993.27 1297.67,2034.46 1297.67,2084.06 C1297.67,2139.6 1342.69,2184.62 1398.23,2184.62 C1453.77,2184.62 1498.79,2139.6 1498.79,2084.06 C1498.79,2034.46 1462.87,1993.28 1415.63,1985.03 V1737.22 L1557.27,1609.01 C1582.99,1585.73 1597.74,1552.48 1597.74,1517.78 V1431.92 H1640.45 V1311.7 H1520.23 V1431.92 Z",
+        ).into())
+        .with_child(svg_filled_gradient_path(
+            "usb-accent-gradient",
+            "M1853.45,818.95 H1772.5 V372.55 C1772.5,347.97 1752.57,328.04 1727.99,328.04 H1067.99 C1043.41,328.04 1023.48,347.97 1023.48,372.55 V818.95 H942.53 C917.95,818.95 898.02,838.88 898.02,863.46 V2213.46 C898.02,2281.44 924.49,2345.35 972.56,2393.42 C1020.63,2441.49 1084.54,2467.96 1152.52,2467.96 H1643.43 C1711.41,2467.96 1775.32,2441.49 1823.39,2393.42 C1871.46,2345.35 1897.93,2281.44 1897.93,2213.46 V863.46 C1897.93,838.88 1878.03,818.95 1853.45,818.95 Z M1112.51,417.06 H1683.49 V818.95 H1112.51 V417.06 Z M1808.95,2213.46 C1808.95,2304.71 1734.71,2378.95 1643.46,2378.95 H1152.55 C1061.3,2378.95 987.06,2304.71 987.06,2213.46 V907.96 H1808.95 V2213.45 Z",
+        ).into())
+        .with_child(svg_filled_gradient_path(
+            "usb-accent-gradient",
+            "M1228.24,540.77 H1287.75 C1295.9,540.77 1302.5,547.37 1302.5,555.52 V615.03 C1302.5,623.18 1295.9,629.78 1287.75,629.78 H1228.24 C1220.09,629.78 1213.49,623.18 1213.49,615.03 V555.52 C1213.49,547.37 1220.09,540.77 1228.24,540.77 Z",
+        ).into())
+        .with_child(svg_filled_gradient_path(
+            "usb-accent-gradient",
+            "M1508.24,540.77 H1567.75 C1575.9,540.77 1582.5,547.37 1582.5,555.52 V615.03 C1582.5,623.18 1575.9,629.78 1567.75,629.78 H1508.24 C1500.09,629.78 1493.49,623.18 1493.49,615.03 V555.52 C1493.49,547.37 1500.09,540.77 1508.24,540.77 Z",
+        ).into())
+        .into()
+}
+
+fn svg_filled_gradient_path(gradient_id: &'static str, data: &'static str) -> Node {
+    Node::element("path")
+        .with_attribute("d", data)
+        .with_attribute("fill", format!("url(#{gradient_id})"))
+        .with_attribute("stroke", "none")
+        .into()
 }
 
 fn icon_launch() -> Node {
@@ -1778,7 +1935,10 @@ fn ui_commands() -> &'static Mutex<Vec<UiCommand>> {
 
 #[cfg(test)]
 mod tests {
-    use cssimpler::core::{BackgroundLayer, Color, Node, RenderNode};
+    use cssimpler::core::{
+        BackgroundLayer, Color, Node, RenderKind, RenderNode, SvgPaintServerData,
+        SvgPathPaintSource,
+    };
     use cssimpler::style::build_render_tree_in_viewport;
 
     #[test]
@@ -1822,11 +1982,170 @@ mod tests {
         assert_eq!(gradient.stops[5].color, expected.end);
     }
 
+    #[test]
+    fn folder_icon_uses_mirrored_shape_and_accent_gradient() {
+        let root = Node::element("span")
+            .with_class("tool-icon")
+            .with_class("folder")
+            .with_style(super::tool_accent_style(
+                crate::registry::ToolId::FolderPageCounter,
+            ))
+            .with_child(super::icon_folder())
+            .into();
+
+        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 80, 80);
+        let svg_node = find_svg_node(&scene).expect("folder icon should resolve as SVG");
+        assert_eq!(svg_node.layout.width, 56.0);
+        assert_eq!(svg_node.layout.height, 56.0);
+
+        let RenderKind::Svg(svg) = &svg_node.kind else {
+            panic!("folder icon should resolve as SVG");
+        };
+
+        assert_eq!(svg.paint_servers.len(), 1);
+        let SvgPaintServerData::LinearGradient(gradient) = &svg.paint_servers[0].data;
+        let expected = super::generated_accent_gradient(Color::rgb(34, 135, 214));
+        assert_eq!(gradient.stops[0].color, expected.shadow);
+        assert_eq!(gradient.stops[1].color, expected.body);
+        assert_eq!(gradient.stops[2].color, expected.body);
+        assert_eq!(gradient.stops[3].color, expected.saturated);
+        assert_eq!(gradient.stops[4].color, expected.shifted);
+        assert_eq!(gradient.stops[5].color, expected.end);
+
+        assert_eq!(svg.paths.len(), 2);
+        let back_bounds = svg.paths[0]
+            .geometry
+            .bounds
+            .expect("folder back path should have bounds");
+        assert!((back_bounds.min_x - 2.0).abs() < 0.01);
+        assert!((back_bounds.max_x - 20.0).abs() < 0.01);
+
+        for path in &svg.paths {
+            assert_eq!(path.paint.fill, None);
+            let expected_stroke = super::FOLDER_ICON_STROKE_WIDTH
+                .parse::<f32>()
+                .expect("folder stroke width should stay numeric");
+            assert!((path.paint.stroke_width - expected_stroke).abs() < 0.01);
+            assert!(matches!(
+                &path.paint.stroke,
+                Some(SvgPathPaintSource::PaintServer(reference))
+                    if reference.id == "folder-accent-gradient"
+            ));
+        }
+    }
+
+    #[test]
+    fn usb_icon_uses_cleaned_shape_and_accent_gradient() {
+        let root = Node::element("span")
+            .with_class("tool-icon")
+            .with_class("usb")
+            .with_style(super::tool_accent_style(
+                crate::registry::ToolId::UsbSafeEject,
+            ))
+            .with_child(super::icon_usb())
+            .into();
+
+        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 80, 80);
+        let svg_node = find_svg_node(&scene).expect("usb icon should resolve as SVG");
+        assert_eq!(svg_node.layout.width, 56.0);
+        assert_eq!(svg_node.layout.height, 56.0);
+
+        let RenderKind::Svg(svg) = &svg_node.kind else {
+            panic!("usb icon should resolve as SVG");
+        };
+
+        assert_eq!(svg.paint_servers.len(), 1);
+        let SvgPaintServerData::LinearGradient(gradient) = &svg.paint_servers[0].data;
+        let expected = super::generated_accent_gradient(Color::rgb(30, 180, 132));
+        assert_eq!(gradient.stops[0].color, expected.shadow);
+        assert_eq!(gradient.stops[1].color, expected.body);
+        assert_eq!(gradient.stops[2].color, expected.body);
+        assert_eq!(gradient.stops[3].color, expected.saturated);
+        assert_eq!(gradient.stops[4].color, expected.shifted);
+        assert_eq!(gradient.stops[5].color, expected.end);
+
+        assert_eq!(svg.paths.len(), 4);
+        for path in &svg.paths {
+            assert_eq!(path.paint.stroke, None);
+            assert!(matches!(
+                &path.paint.fill,
+                Some(SvgPathPaintSource::PaintServer(reference))
+                    if reference.id == "usb-accent-gradient"
+            ));
+
+            let bounds = path
+                .geometry
+                .bounds
+                .expect("usb artwork path should have bounds");
+            assert!(bounds.min_x > 0.0);
+            assert!(bounds.min_y > 0.0);
+            assert!(bounds.max_x < 2796.0);
+            assert!(bounds.max_y < 2796.0);
+        }
+    }
+
+    #[test]
+    fn pdf_icon_uses_vector_badge_and_accent_gradient() {
+        let root = Node::element("span")
+            .with_class("tool-icon")
+            .with_class("pdf")
+            .with_style(super::tool_accent_style(crate::registry::ToolId::PdfJoiner))
+            .with_child(super::icon_pdf_document())
+            .into();
+
+        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 80, 80);
+        let svg_node = find_svg_node(&scene).expect("pdf icon should resolve as SVG");
+        assert_eq!(svg_node.layout.width, 56.0);
+        assert_eq!(svg_node.layout.height, 56.0);
+
+        let RenderKind::Svg(svg) = &svg_node.kind else {
+            panic!("pdf icon should resolve as SVG");
+        };
+
+        assert_eq!(svg.paint_servers.len(), 1);
+        let SvgPaintServerData::LinearGradient(gradient) = &svg.paint_servers[0].data;
+        let expected = super::generated_accent_gradient(Color::rgb(117, 86, 206));
+        assert_eq!(gradient.stops[0].color, expected.shadow);
+        assert_eq!(gradient.stops[1].color, expected.body);
+        assert_eq!(gradient.stops[2].color, expected.body);
+        assert_eq!(gradient.stops[3].color, expected.saturated);
+        assert_eq!(gradient.stops[4].color, expected.shifted);
+        assert_eq!(gradient.stops[5].color, expected.end);
+
+        assert_eq!(svg.paths.len(), 3);
+        for path in &svg.paths[0..2] {
+            assert_eq!(path.paint.fill, None);
+            assert!(matches!(
+                &path.paint.stroke,
+                Some(SvgPathPaintSource::PaintServer(reference))
+                    if reference.id == "pdf-accent-gradient"
+            ));
+        }
+        assert!(matches!(
+            &svg.paths[2].paint.fill,
+            Some(SvgPathPaintSource::PaintServer(reference))
+                if reference.id == "pdf-accent-gradient"
+        ));
+        assert_eq!(svg.paths[2].paint.stroke, None);
+        assert!(
+            svg.paths[2].geometry.contours.len() >= 6,
+            "badge should include reversed contours for PDF letter cutouts"
+        );
+    }
+
     fn find_node_with_gradient(node: &RenderNode) -> Option<&RenderNode> {
         if !node.style.background_layers.is_empty() {
             return Some(node);
         }
 
         node.children.iter().find_map(find_node_with_gradient)
+    }
+
+    fn find_svg_node(node: &RenderNode) -> Option<&RenderNode> {
+        if let RenderKind::Svg(_) = &node.kind {
+            return Some(node);
+        }
+
+        node.children.iter().find_map(find_svg_node)
     }
 }
