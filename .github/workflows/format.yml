@@ -1,0 +1,40 @@
+name: Format
+
+on:
+  pull_request:
+    paths:
+      - "**/*.rs"
+      - Cargo.toml
+      - jakefile.toml
+      - ".github/workflows/format.yml"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  format:
+    name: Cargo fmt
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PrintLTools
+        uses: actions/checkout@v4
+        with:
+          path: printltools
+
+      - name: Checkout cssimpler path dependency
+        uses: actions/checkout@v4
+        with:
+          repository: NicTanghe/cssimpler
+          path: cssimpler
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        working-directory: printltools
+        run: cargo fmt --all -- --check
