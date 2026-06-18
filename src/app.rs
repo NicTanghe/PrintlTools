@@ -1344,6 +1344,29 @@ fn generated_accent_gradient(base_color: Color) -> AccentGradient {
     }
 }
 
+fn generated_svg_accent_gradient(base_color: Color) -> AccentGradient {
+    let base = HsvColor::from_color(base_color);
+    let highlight = HsvColor {
+        hue: base.hue,
+        saturation: base.saturation,
+        value: (base.value + 0.06).min(0.88),
+    }
+    .to_color();
+
+    AccentGradient {
+        shadow: HsvColor {
+            hue: base.hue,
+            saturation: base.saturation,
+            value: 0.52,
+        }
+        .to_color(),
+        body: base_color,
+        saturated: highlight,
+        shifted: highlight,
+        end: highlight,
+    }
+}
+
 #[derive(Clone, Copy)]
 struct HsvColor {
     hue: f32,
@@ -1466,7 +1489,7 @@ fn icon_document() -> Node {
 }
 
 fn icon_pdf_document() -> Node {
-    let gradient = generated_accent_gradient(tool_accent_base(ToolId::PdfJoiner));
+    let gradient = generated_svg_accent_gradient(tool_accent_base(ToolId::PdfJoiner));
     let stroke_width = "1.35";
 
     Node::element("svg")
@@ -1533,7 +1556,7 @@ fn icon_pdf_document() -> Node {
 const FOLDER_ICON_STROKE_WIDTH: &str = "1.15";
 
 fn icon_folder() -> Node {
-    let gradient = generated_accent_gradient(tool_accent_base(ToolId::FolderPageCounter));
+    let gradient = generated_svg_accent_gradient(tool_accent_base(ToolId::FolderPageCounter));
     let stroke_width = FOLDER_ICON_STROKE_WIDTH;
 
     Node::element("svg")
@@ -1598,7 +1621,7 @@ fn svg_gradient_stop(offset: &'static str, color: Color) -> Node {
 }
 
 fn icon_usb() -> Node {
-    let gradient = generated_accent_gradient(tool_accent_base(ToolId::UsbSafeEject));
+    let gradient = generated_svg_accent_gradient(tool_accent_base(ToolId::UsbSafeEject));
 
     Node::element("svg")
         .with_class("svg-icon")
@@ -2004,7 +2027,7 @@ mod tests {
 
         assert_eq!(svg.paint_servers.len(), 1);
         let SvgPaintServerData::LinearGradient(gradient) = &svg.paint_servers[0].data;
-        let expected = super::generated_accent_gradient(Color::rgb(34, 135, 214));
+        let expected = super::generated_svg_accent_gradient(Color::rgb(34, 135, 214));
         assert_eq!(gradient.stops[0].color, expected.shadow);
         assert_eq!(gradient.stops[1].color, expected.body);
         assert_eq!(gradient.stops[2].color, expected.body);
@@ -2056,7 +2079,7 @@ mod tests {
 
         assert_eq!(svg.paint_servers.len(), 1);
         let SvgPaintServerData::LinearGradient(gradient) = &svg.paint_servers[0].data;
-        let expected = super::generated_accent_gradient(Color::rgb(30, 180, 132));
+        let expected = super::generated_svg_accent_gradient(Color::rgb(30, 180, 132));
         assert_eq!(gradient.stops[0].color, expected.shadow);
         assert_eq!(gradient.stops[1].color, expected.body);
         assert_eq!(gradient.stops[2].color, expected.body);
@@ -2104,7 +2127,7 @@ mod tests {
 
         assert_eq!(svg.paint_servers.len(), 1);
         let SvgPaintServerData::LinearGradient(gradient) = &svg.paint_servers[0].data;
-        let expected = super::generated_accent_gradient(Color::rgb(117, 86, 206));
+        let expected = super::generated_svg_accent_gradient(Color::rgb(117, 86, 206));
         assert_eq!(gradient.stops[0].color, expected.shadow);
         assert_eq!(gradient.stops[1].color, expected.body);
         assert_eq!(gradient.stops[2].color, expected.body);
