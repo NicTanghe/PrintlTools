@@ -106,7 +106,8 @@
     flex-grow: 1;
     min-height: 0px;
     overflow-y: auto;
-    padding: 0px 34px 12px 0px;
+    margin: -28px 0px -28px -28px;
+    padding: 28px 34px 40px 28px;
     scrollbar-width: thin;
     scrollbar-color: rgba(150, 166, 178, 0.68) rgba(255, 255, 255, 0);
 }

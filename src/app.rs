@@ -2006,6 +2006,53 @@ mod tests {
     }
 
     #[test]
+    fn scroll_content_keeps_layout_position_with_shadow_gutter() {
+        let root = Node::element("div")
+            .with_id("app")
+            .with_child(
+                Node::element("section")
+                    .with_class("shell")
+                    .with_child(Node::element("header").with_class("topbar").into())
+                    .with_child(
+                        Node::element("main")
+                            .with_id("shadow-scrollport")
+                            .with_class("content")
+                            .with_child(
+                                Node::element("div")
+                                    .with_id("shadow-content")
+                                    .with_class("view")
+                                    .with_child(
+                                        Node::element("div")
+                                            .with_id("shadow-card")
+                                            .with_class("empty-state")
+                                            .into(),
+                                    )
+                                    .into(),
+                            )
+                            .into(),
+                    )
+                    .into(),
+            )
+            .into();
+
+        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 900, 760);
+        let scrollport = find_node_by_id(&scene, "shadow-scrollport")
+            .expect("shadow scrollport should be rendered");
+        let content =
+            find_node_by_id(&scene, "shadow-content").expect("content should be rendered");
+        let card = find_node_by_id(&scene, "shadow-card").expect("card should be rendered");
+
+        assert_eq!(content.layout.x, 42.0);
+        assert_eq!(content.layout.y, 142.0);
+        assert_eq!(card.layout.x, 42.0);
+        assert_eq!(scrollport.layout.x, content.layout.x - 28.0);
+        assert_eq!(scrollport.layout.y, content.layout.y - 28.0);
+        assert_eq!(scrollport.content_inset.left, 28.0);
+        assert_eq!(scrollport.content_inset.top, 28.0);
+        assert_eq!(scrollport.content_inset.bottom, 40.0);
+    }
+
+    #[test]
     fn folder_icon_uses_mirrored_shape_and_accent_gradient() {
         let root = Node::element("span")
             .with_class("tool-icon")
@@ -2170,5 +2217,15 @@ mod tests {
         }
 
         node.children.iter().find_map(find_svg_node)
+    }
+
+    fn find_node_by_id<'a>(node: &'a RenderNode, id: &str) -> Option<&'a RenderNode> {
+        if node.element_id.as_deref() == Some(id) {
+            return Some(node);
+        }
+
+        node.children
+            .iter()
+            .find_map(|child| find_node_by_id(child, id))
     }
 }
