@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+if [ "${PRINTLTOOLS_HOOK_TEST:-}" = "1" ]; then
+    powershell.exe -NoProfile -ExecutionPolicy Bypass \
+        -File scripts/version_bump.ps1 \
+        -BumpType patch \
+        -SkipIfChangedFromHead \
+        -DryRun
+    cargo fmt --all -- --check
+    exit 0
+fi
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass \
+    -File scripts/version_bump.ps1 \
+    -BumpType patch \
+    -SkipIfChangedFromHead
+
+cargo fmt --all
+git add -A

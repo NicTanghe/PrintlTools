@@ -3,7 +3,9 @@ param(
     [ValidateSet("major", "minor", "patch")]
     [string]$BumpType,
 
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    [switch]$SkipIfChangedFromHead
 )
 
 Set-StrictMode -Version Latest
@@ -166,6 +168,22 @@ $versionMatch = Get-TomlStringValue $packageSection "version"
 
 $packageName = $nameMatch.Groups["value"].Value
 $oldVersion = $versionMatch.Groups["value"].Value
+
+if ($SkipIfChangedFromHead) {
+    $headCargoTomlLines = & git -C $repoRoot show "HEAD:Cargo.toml" 2>$null
+    if ($LASTEXITCODE -eq 0) {
+        $headCargoToml = $headCargoTomlLines -join [Environment]::NewLine
+        $headPackageSection = Get-TomlSection $headCargoToml "package"
+        $headVersionMatch = Get-TomlStringValue $headPackageSection "version"
+        $headVersion = $headVersionMatch.Groups["value"].Value
+
+        if ($oldVersion -ne $headVersion) {
+            Write-Host "$packageName version already changed: $headVersion -> $oldVersion"
+            exit 0
+        }
+    }
+}
+
 $newVersion = Get-NextVersion $oldVersion $BumpType
 
 $versionIndex = $packageSection.Groups["body"].Index + $versionMatch.Groups["value"].Index

@@ -1,3 +1,4 @@
 format = "cargo fmt --all"
 format-check = "cargo fmt --all -- --check"
 version-bump = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/version_bump.ps1"
+install-hooks = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install_git_hooks.ps1"
