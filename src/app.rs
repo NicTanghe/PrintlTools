@@ -64,7 +64,7 @@ enum Message {
     Tray(TrayEvent),
     OpenLauncher,
     OpenSettings,
-    Exit,
+    Minimize,
     ToolPressed(ToolId),
     FolderPicked(Option<PathBuf>),
     PdfFilesPicked(Option<Vec<PathBuf>>),
@@ -90,7 +90,7 @@ enum Message {
 enum UiCommand {
     OpenLauncher,
     OpenSettings,
-    Exit,
+    Minimize,
     ToolPressed(ToolId),
     UsbDriveSelected(usize),
     ToggleIncludeSubfolders,
@@ -346,7 +346,7 @@ impl From<UiCommand> for Message {
         match value {
             UiCommand::OpenLauncher => Self::OpenLauncher,
             UiCommand::OpenSettings => Self::OpenSettings,
-            UiCommand::Exit => Self::Exit,
+            UiCommand::Minimize => Self::Minimize,
             UiCommand::ToolPressed(id) => Self::ToolPressed(id),
             UiCommand::UsbDriveSelected(index) => Self::UsbDriveSelected(index),
             UiCommand::ToggleIncludeSubfolders => Self::ToggleIncludeSubfolders,
@@ -400,7 +400,7 @@ fn handle_message(state: &mut PrintLTools, message: Message) -> bool {
             state.view = View::Settings;
             true
         }
-        Message::Exit => quit(),
+        Message::Minimize => minimize_to_tray(state),
         Message::ToolPressed(id) => start_tool(state, id),
         Message::FolderPicked(folder) => handle_folder_picked(state, folder),
         Message::PdfFilesPicked(files) => handle_pdf_files_picked(state, files),
@@ -478,6 +478,31 @@ fn handle_tray_event(state: &mut PrintLTools, event: TrayEvent) -> bool {
             ToolResult::error(
                 "Tray integration",
                 "The app is running, but the Windows tray icon could not be initialized.",
+                vec![error],
+            ),
+        ),
+    }
+}
+
+fn minimize_to_tray(state: &mut PrintLTools) -> bool {
+    if state.tray_events.is_none() {
+        return record_result(
+            state,
+            ToolResult::warning(
+                "Minimize to tray",
+                "The app could not be minimized because tray integration is unavailable.",
+                Vec::new(),
+            ),
+        );
+    }
+
+    match crate::window_control::hide() {
+        Ok(()) => false,
+        Err(error) => record_result(
+            state,
+            ToolResult::warning(
+                "Minimize to tray",
+                "The app could not hide its window.",
                 vec![error],
             ),
         ),
@@ -894,16 +919,22 @@ fn view(state: &PrintLTools) -> Node {
                             <p>Print and file utilities</p>
                         </div>
                     </div>
-                    <div class="top-actions">
-                        {nav_button("Launcher", icon_launch(), command_open_launcher, state.view == View::Launcher)}
-                        {nav_button("Settings", icon_sliders(), command_open_settings, state.view == View::Settings)}
-                        {add_class(nav_button("Quit", icon_exit(), command_exit, false), "danger")}
-                    </div>
+                    {top_actions(state.view)}
                 </header>
                 <main class="content">
                     {body}
                 </main>
             </section>
+        </div>
+    }
+}
+
+fn top_actions(current_view: View) -> Node {
+    ui! {
+        <div class="top-actions">
+            {nav_button("Launcher", icon_launch(), command_open_launcher, current_view == View::Launcher)}
+            {nav_button("Settings", icon_sliders(), command_open_settings, current_view == View::Settings)}
+            {add_class(nav_button("Minimize", icon_minimize(), command_minimize, false), "minimize")}
         </div>
     }
 }
@@ -955,7 +986,7 @@ fn settings_view(state: &PrintLTools) -> Node {
                 </div>
                 <div class="settings-list">
                     {toggle_button(
-                        "Open launcher on tray icon click",
+                        "Open launcher when restoring from tray",
                         state.open_launcher_on_tray_click,
                         command_toggle_open_on_tray_click,
                     )}
@@ -1687,12 +1718,8 @@ fn icon_sliders() -> Node {
     )
 }
 
-fn icon_exit() -> Node {
-    svg_icon(
-        "icon-exit",
-        &["M10 7 L15 12 L10 17", "M15 12 L3 12", "M21 5 L21 19 L17 19"],
-        &[],
-    )
+fn icon_minimize() -> Node {
+    svg_icon("icon-minimize", &["M5 17 L19 17"], &[])
 }
 
 fn icon_chevron() -> Node {
@@ -1767,8 +1794,8 @@ fn command_open_settings() {
     enqueue(UiCommand::OpenSettings);
 }
 
-fn command_exit() {
-    enqueue(UiCommand::Exit);
+fn command_minimize() {
+    enqueue(UiCommand::Minimize);
 }
 
 fn command_folder_page_counter() {
@@ -2053,6 +2080,17 @@ mod tests {
     }
 
     #[test]
+    fn topbar_uses_minimize_instead_of_quit() {
+        let root = super::top_actions(super::View::Launcher);
+        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 480, 48);
+        let mut text = Vec::new();
+        collect_text(&scene, &mut text);
+
+        assert!(text.iter().any(|value| value == "Minimize"));
+        assert!(!text.iter().any(|value| value == "Quit"));
+    }
+
+    #[test]
     fn folder_icon_uses_mirrored_shape_and_accent_gradient() {
         let root = Node::element("span")
             .with_class("tool-icon")
@@ -2227,5 +2265,15 @@ mod tests {
         node.children
             .iter()
             .find_map(|child| find_node_by_id(child, id))
+    }
+
+    fn collect_text(node: &RenderNode, text: &mut Vec<String>) {
+        if let RenderKind::Text(value) = &node.kind {
+            text.push(value.clone());
+        }
+
+        for child in &node.children {
+            collect_text(child, text);
+        }
     }
 }

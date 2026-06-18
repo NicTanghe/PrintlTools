@@ -16,6 +16,10 @@ pub fn shutdown() {
     platform::shutdown();
 }
 
+fn tray_notification_code(lparam: isize) -> u32 {
+    (lparam as usize & 0xffff) as u32
+}
+
 #[cfg(windows)]
 mod platform {
     use std::mem::size_of;
@@ -28,7 +32,7 @@ mod platform {
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Shell::{
         NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION,
-        NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
+        NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
@@ -40,7 +44,7 @@ mod platform {
     };
     use windows::core::w;
 
-    use super::TrayEvent;
+    use super::{TrayEvent, tray_notification_code};
 
     const WM_TRAYICON: u32 = WM_USER + 1;
     const WM_TRAY_SHUTDOWN: u32 = WM_APP + 1;
@@ -157,8 +161,8 @@ mod platform {
         match message {
             WM_CREATE => LRESULT(0),
             WM_TRAYICON => {
-                match lparam.0 as u32 {
-                    WM_LBUTTONUP => send(TrayEvent::OpenLauncher),
+                match tray_notification_code(lparam.0) {
+                    NIN_SELECT | WM_LBUTTONUP => restore_and_send(TrayEvent::OpenLauncher),
                     WM_RBUTTONUP => unsafe { show_menu(hwnd) },
                     _ => {}
                 }
@@ -167,8 +171,8 @@ mod platform {
             }
             WM_COMMAND => {
                 match wparam.0 & 0xffff {
-                    MENU_OPEN => send(TrayEvent::OpenLauncher),
-                    MENU_SETTINGS => send(TrayEvent::OpenSettings),
+                    MENU_OPEN => restore_and_send(TrayEvent::OpenLauncher),
+                    MENU_SETTINGS => restore_and_send(TrayEvent::OpenSettings),
                     MENU_EXIT => send(TrayEvent::Exit),
                     _ => {}
                 }
@@ -265,6 +269,15 @@ mod platform {
         }
     }
 
+    fn restore_and_send(event: TrayEvent) {
+        if let Err(error) = crate::window_control::restore() {
+            send(TrayEvent::Error(error));
+            return;
+        }
+
+        send(event);
+    }
+
     fn write_wide_fixed(buffer: &mut [u16], value: &str) {
         let mut encoded = value.encode_utf16();
 
@@ -292,4 +305,18 @@ mod platform {
     }
 
     pub fn shutdown() {}
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn tray_notification_uses_low_word_for_version_four_callbacks() {
+        let encoded = ((super::platform_tray_uid_for_test() as isize) << 16) | 0x0400;
+        assert_eq!(super::tray_notification_code(encoded), 0x0400);
+    }
+}
+
+#[cfg(test)]
+const fn platform_tray_uid_for_test() -> u32 {
+    1
 }
