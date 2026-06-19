@@ -24,6 +24,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile=..\..\assets\windows\app-icon.ico
 OutputDir={#OutputRoot}
 #ifdef MyOutputBaseFilename
 OutputBaseFilename={#MyOutputBaseFilename}

@@ -9,6 +9,7 @@ mod results;
 mod tray;
 mod usb;
 mod window_control;
+mod windows_icon;
 
 fn main() {
     if let Some(exit_code) = usb::run_eject_helper_from_args(std::env::args_os().collect()) {

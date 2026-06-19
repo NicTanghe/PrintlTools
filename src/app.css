@@ -59,16 +59,10 @@
     height: 42px;
     justify-content: center;
     align-items: center;
-    color: rgb(255, 255, 255);
-    background: rgb(29, 84, 132);
-    border: 1px solid rgb(218, 235, 246);
-    border-radius: 8px;
+    background: rgba(255, 255, 255, 0);
+    border: 0px solid rgba(255, 255, 255, 0);
+    border-radius: 0px;
     box-shadow: 0 8px 16px rgba(26, 66, 105, 0.16);
-}
-
-.brand-mark .svg-icon {
-    width: 25px;
-    height: 25px;
 }
 
 .brand-copy {
@@ -671,4 +665,9 @@
 .drive-icon .svg-icon {
     width: 44px;
     height: 44px;
+}
+
+.icon-app-brand {
+    width: 42px;
+    height: 42px;
 }

@@ -54,11 +54,10 @@ mod platform {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
-        DispatchMessageW, GetCursorPos, GetMessageTime, GetMessageW, HMENU, IDI_APPLICATION,
-        LoadIconW, MF_STRING, MSG, PostQuitMessage, RegisterClassW, SetForegroundWindow,
-        TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_COMMAND, WM_CREATE,
-        WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW,
-        WS_OVERLAPPED,
+        DispatchMessageW, GetCursorPos, GetMessageTime, GetMessageW, HMENU, MF_STRING, MSG,
+        PostQuitMessage, RegisterClassW, SetForegroundWindow, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
+        TrackPopupMenu, TranslateMessage, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_LBUTTONUP,
+        WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
     };
     use windows::core::w;
 
@@ -188,8 +187,7 @@ mod platform {
         let mut data = notify_icon_data(hwnd);
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
         data.uCallbackMessage = WM_TRAYICON;
-        data.hIcon = unsafe { LoadIconW(None, IDI_APPLICATION) }
-            .map_err(|error| format!("LoadIconW failed: {error}"))?;
+        data.hIcon = crate::windows_icon::load_tray()?;
         write_wide_fixed(&mut data.szTip, "PrintLTools");
 
         if !unsafe { Shell_NotifyIconW(NIM_ADD, &data) }.as_bool() {

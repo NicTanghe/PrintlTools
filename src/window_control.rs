@@ -46,7 +46,13 @@ unsafe fn restore_window(window: windows::Win32::Foundation::HWND) -> Result<(),
 #[cfg(windows)]
 pub fn position_bottom_right() -> Result<(), String> {
     let window = find_window()?;
-    unsafe { position_window_bottom_right(window) }
+    unsafe { position_window_bottom_right(window)? };
+
+    if let Err(error) = crate::windows_icon::apply_to_window(window) {
+        eprintln!("PrintLTools window icon could not be applied: {error}");
+    }
+
+    Ok(())
 }
 
 #[cfg(windows)]

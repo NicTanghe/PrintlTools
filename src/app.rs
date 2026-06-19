@@ -949,7 +949,7 @@ fn view(state: &PrintLTools) -> Node {
                 <header class="topbar">
                     <div class="brand">
                         <span class="brand-mark">
-                            {icon_document()}
+                            {icon_app_brand()}
                         </span>
                         <div class="brand-copy">
                             <h1>PrintLTools</h1>
@@ -1542,18 +1542,56 @@ fn tool_icon(id: ToolId) -> Node {
     tile.into()
 }
 
-fn icon_document() -> Node {
-    svg_icon(
-        "icon-document",
-        &[
-            "M7 3 L15 3 L19 7 L19 21 L7 21 L7 3 Z",
-            "M15 3 L15 7 L19 7",
-            "M10 12 L16 12",
-            "M10 16 L15 16",
-            "M10 8 L12 8",
-        ],
-        &[],
-    )
+fn icon_app_brand() -> Node {
+    Node::element("svg")
+        .with_class("svg-icon")
+        .with_class("icon-app-brand")
+        .with_attribute("xmlns", "http://www.w3.org/2000/svg")
+        .with_attribute("viewBox", "0 0 64 64")
+        .with_child(
+            Node::element("path")
+                .with_attribute(
+                    "d",
+                    "M14 4 H50 C55.52 4 60 8.48 60 14 V50 C60 55.52 55.52 60 50 60 H14 C8.48 60 4 55.52 4 50 V14 C4 8.48 8.48 4 14 4 Z",
+                )
+                .with_attribute("fill", "rgb(20, 106, 158)")
+                .with_attribute("stroke", "none")
+                .into(),
+        )
+        .with_child(
+            Node::element("path")
+                .with_attribute(
+                    "d",
+                    "M24 16.5 H36.5 C37.2 16.5 37.8 16.8 38.3 17.3 L46.7 25.7 C47.2 26.2 47.5 26.8 47.5 27.5 V46 C47.5 47.1 46.6 48 45.5 48 H24 C22.9 48 22 47.1 22 46 V18.5 C22 17.4 22.9 16.5 24 16.5 Z",
+                )
+                .with_attribute("fill", "none")
+                .with_attribute("stroke", "rgb(255, 255, 255)")
+                .with_attribute("stroke-width", "2.5")
+                .with_attribute("stroke-linecap", "round")
+                .with_attribute("stroke-linejoin", "round")
+                .into(),
+        )
+        .with_child(
+            Node::element("path")
+                .with_attribute("d", "M38 18 V25 C38 26.1 38.9 27 40 27 H46")
+                .with_attribute("fill", "none")
+                .with_attribute("stroke", "rgb(255, 255, 255)")
+                .with_attribute("stroke-width", "2.5")
+                .with_attribute("stroke-linecap", "round")
+                .with_attribute("stroke-linejoin", "round")
+                .into(),
+        )
+        .with_child(
+            Node::element("path")
+                .with_attribute("d", "M28.5 33.5 H37.5 M28.5 39 H41.5")
+                .with_attribute("fill", "none")
+                .with_attribute("stroke", "rgb(255, 255, 255)")
+                .with_attribute("stroke-width", "2")
+                .with_attribute("stroke-linecap", "round")
+                .with_attribute("stroke-linejoin", "round")
+                .into(),
+        )
+        .into()
 }
 
 fn icon_pdf_document() -> Node {
@@ -2151,6 +2189,39 @@ mod tests {
                 .iter()
                 .all(|button| button.layout.x + button.layout.width <= 476.0)
         );
+    }
+
+    #[test]
+    fn brand_mark_uses_full_size_flat_app_icon_svg() {
+        let root = Node::element("span")
+            .with_class("brand-mark")
+            .with_child(super::icon_app_brand())
+            .into();
+
+        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 80, 80);
+        let svg_node = find_svg_node(&scene).expect("brand mark should resolve as SVG");
+        assert_eq!(svg_node.layout.width, 42.0);
+        assert_eq!(svg_node.layout.height, 42.0);
+
+        let RenderKind::Svg(svg) = &svg_node.kind else {
+            panic!("brand mark should resolve as SVG");
+        };
+
+        assert_eq!(svg.paint_servers.len(), 0);
+        assert_eq!(svg.paths.len(), 4);
+        assert_eq!(
+            svg.paths[0].paint.fill,
+            Some(SvgPathPaintSource::Color(Color::rgb(20, 106, 158)))
+        );
+        assert_eq!(svg.paths[0].paint.stroke, None);
+
+        for path in &svg.paths[1..] {
+            assert_eq!(path.paint.fill, None);
+            assert_eq!(
+                path.paint.stroke,
+                Some(SvgPathPaintSource::Color(Color::rgb(255, 255, 255)))
+            );
+        }
     }
 
     #[test]
