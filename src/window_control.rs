@@ -14,16 +14,31 @@ pub fn hide() -> Result<(), String> {
 
 #[cfg(windows)]
 pub fn restore() -> Result<(), String> {
+    let window = find_window()?;
+    unsafe { restore_window(window)? };
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn is_visible() -> Result<bool, String> {
+    use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+    let window = find_window()?;
+    Ok(unsafe { IsWindowVisible(window) }.as_bool())
+}
+
+#[cfg(windows)]
+unsafe fn restore_window(window: windows::Win32::Foundation::HWND) -> Result<(), String> {
+    use windows::Win32::Graphics::Gdi::{RDW_INTERNALPAINT, RedrawWindow};
     use windows::Win32::UI::WindowsAndMessaging::{
         SW_RESTORE, SW_SHOW, SetForegroundWindow, ShowWindow,
     };
 
-    let window = find_window()?;
     unsafe {
         let _ = ShowWindow(window, SW_SHOW);
         let _ = ShowWindow(window, SW_RESTORE);
         position_window_bottom_right(window)?;
         let _ = SetForegroundWindow(window);
+        let _ = RedrawWindow(Some(window), None, None, RDW_INTERNALPAINT);
     }
     Ok(())
 }
@@ -118,16 +133,22 @@ pub fn restore() -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
+pub fn is_visible() -> Result<bool, String> {
+    Err("Tray window visibility is only implemented on Windows.".to_string())
+}
+
+#[cfg(not(windows))]
 pub fn position_bottom_right() -> Result<(), String> {
     Err("Automatic window positioning is only implemented on Windows.".to_string())
 }
 
-#[cfg(all(test, windows))]
+#[cfg(test)]
 mod tests {
-    use windows::Win32::Foundation::RECT;
-
+    #[cfg(windows)]
     #[test]
     fn bottom_right_position_uses_work_area_and_margin() {
+        use windows::Win32::Foundation::RECT;
+
         let work_area = RECT {
             left: 0,
             top: 0,
@@ -147,8 +168,11 @@ mod tests {
         );
     }
 
+    #[cfg(windows)]
     #[test]
     fn bottom_right_position_stays_inside_small_work_area() {
+        use windows::Win32::Foundation::RECT;
+
         let work_area = RECT {
             left: -1000,
             top: 0,

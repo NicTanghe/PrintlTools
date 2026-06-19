@@ -1,5 +1,6 @@
 #[derive(Debug, Clone)]
 pub enum TrayEvent {
+    HideLauncher,
     OpenLauncher,
     OpenSettings,
     Error(String),
@@ -15,8 +16,30 @@ fn tray_notification_code(lparam: isize) -> u32 {
     (lparam as usize & 0xffff) as u32
 }
 
+const DUPLICATE_LEFT_CLICK_WINDOW_MS: u32 = 250;
+
+#[derive(Debug, Default)]
+struct LeftClickFilter {
+    last_handled: Option<(u32, u32)>,
+}
+
+impl LeftClickFilter {
+    fn should_handle(&mut self, code: u32, message_time: u32) -> bool {
+        if let Some((last_code, last_time)) = self.last_handled
+            && code != last_code
+            && message_time.wrapping_sub(last_time) <= DUPLICATE_LEFT_CLICK_WINDOW_MS
+        {
+            return false;
+        }
+
+        self.last_handled = Some((code, message_time));
+        true
+    }
+}
+
 #[cfg(windows)]
 mod platform {
+    use std::cell::RefCell;
     use std::mem::size_of;
     use std::sync::{Mutex, OnceLock, mpsc::Sender};
     use std::thread;
@@ -31,14 +54,15 @@ mod platform {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
-        DispatchMessageW, GetCursorPos, GetMessageW, HMENU, IDI_APPLICATION, LoadIconW, MF_STRING,
-        MSG, PostQuitMessage, RegisterClassW, SetForegroundWindow, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
-        TrackPopupMenu, TranslateMessage, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_LBUTTONUP,
-        WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+        DispatchMessageW, GetCursorPos, GetMessageTime, GetMessageW, HMENU, IDI_APPLICATION,
+        LoadIconW, MF_STRING, MSG, PostQuitMessage, RegisterClassW, SetForegroundWindow,
+        TPM_LEFTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_COMMAND, WM_CREATE,
+        WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WM_USER, WNDCLASSW, WS_EX_TOOLWINDOW,
+        WS_OVERLAPPED,
     };
     use windows::core::w;
 
-    use super::{TrayEvent, tray_notification_code};
+    use super::{LeftClickFilter, TrayEvent, tray_notification_code};
 
     const WM_TRAYICON: u32 = WM_USER + 1;
     const TRAY_UID: u32 = 1;
@@ -47,6 +71,11 @@ mod platform {
     const MENU_EXIT: usize = 1003;
 
     static TRAY_SENDER: OnceLock<Mutex<Sender<TrayEvent>>> = OnceLock::new();
+
+    thread_local! {
+        static LEFT_CLICK_FILTER: RefCell<LeftClickFilter> =
+            RefCell::new(LeftClickFilter::default());
+    }
 
     pub fn spawn(sender: Sender<TrayEvent>) -> Result<(), String> {
         if TRAY_SENDER.set(Mutex::new(sender)).is_err() {
@@ -125,8 +154,11 @@ mod platform {
         match message {
             WM_CREATE => LRESULT(0),
             WM_TRAYICON => {
-                match tray_notification_code(lparam.0) {
-                    NIN_SELECT | WM_LBUTTONUP => restore_and_send(TrayEvent::OpenLauncher),
+                let notification = tray_notification_code(lparam.0);
+                match notification {
+                    NIN_SELECT | WM_LBUTTONUP if should_handle_left_click(notification) => {
+                        toggle_and_send();
+                    }
                     WM_RBUTTONUP => unsafe { show_menu(hwnd) },
                     _ => {}
                 }
@@ -233,12 +265,26 @@ mod platform {
     }
 
     fn restore_and_send(event: TrayEvent) {
+        crate::app::request_full_window_repaint();
         if let Err(error) = crate::window_control::restore() {
             send(TrayEvent::Error(error));
             return;
         }
 
         send(event);
+    }
+
+    fn should_handle_left_click(code: u32) -> bool {
+        let message_time = unsafe { GetMessageTime() } as u32;
+        LEFT_CLICK_FILTER.with(|filter| filter.borrow_mut().should_handle(code, message_time))
+    }
+
+    fn toggle_and_send() {
+        match crate::window_control::is_visible() {
+            Ok(true) => send(TrayEvent::HideLauncher),
+            Ok(false) => restore_and_send(TrayEvent::OpenLauncher),
+            Err(error) => send(TrayEvent::Error(error)),
+        }
     }
 
     fn write_wide_fixed(buffer: &mut [u16], value: &str) {
@@ -270,10 +316,36 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
+    use super::LeftClickFilter;
+
     #[test]
     fn tray_notification_uses_low_word_for_version_four_callbacks() {
         let encoded = ((super::platform_tray_uid_for_test() as isize) << 16) | 0x0400;
         assert_eq!(super::tray_notification_code(encoded), 0x0400);
+    }
+
+    #[test]
+    fn paired_left_click_notifications_are_handled_once() {
+        let mut filter = LeftClickFilter::default();
+
+        assert!(filter.should_handle(0x0400, 1_000));
+        assert!(!filter.should_handle(0x0202, 1_001));
+    }
+
+    #[test]
+    fn repeated_clicks_of_the_same_notification_type_are_preserved() {
+        let mut filter = LeftClickFilter::default();
+
+        assert!(filter.should_handle(0x0202, 1_000));
+        assert!(filter.should_handle(0x0202, 1_050));
+    }
+
+    #[test]
+    fn later_notification_of_a_different_type_is_preserved() {
+        let mut filter = LeftClickFilter::default();
+
+        assert!(filter.should_handle(0x0400, 1_000));
+        assert!(filter.should_handle(0x0202, 1_000 + super::DUPLICATE_LEFT_CLICK_WINDOW_MS + 1));
     }
 }
 

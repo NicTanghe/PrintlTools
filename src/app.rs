@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::process;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -105,12 +106,18 @@ enum UiCommand {
 }
 
 static UI_COMMANDS: OnceLock<Mutex<Vec<UiCommand>>> = OnceLock::new();
+static FULL_REPAINT_REQUEST: AtomicU8 = AtomicU8::new(0);
+
+pub(crate) fn request_full_window_repaint() {
+    FULL_REPAINT_REQUEST.store(1, Ordering::Release);
+}
 
 pub fn run() -> cssimpler::renderer::Result<()> {
     let app = PollingSceneProvider {
         inner: App::new(PrintLTools::new(), stylesheet(), update, view),
         profiler: FrameProfiler::from_env(),
         window_positioned: false,
+        full_repaint_frames: 0,
     };
 
     cssimpler::renderer::run_with_scene_provider(
@@ -129,6 +136,7 @@ struct PollingSceneProvider<P> {
     inner: P,
     profiler: FrameProfiler,
     window_positioned: bool,
+    full_repaint_frames: u8,
 }
 
 impl<P> SceneProvider for PollingSceneProvider<P>
@@ -136,12 +144,24 @@ where
     P: SceneProvider,
 {
     fn update(&mut self, frame: FrameInfo) {
+        self.full_repaint_frames = self.full_repaint_frames.saturating_sub(1);
+        self.full_repaint_frames = self
+            .full_repaint_frames
+            .max(FULL_REPAINT_REQUEST.swap(0, Ordering::AcqRel));
         self.profiler.record_frame(frame);
         self.inner.update(frame);
     }
 
     fn scene(&self) -> &[RenderNode] {
         self.inner.scene()
+    }
+
+    fn capture_scene(&mut self) -> Vec<RenderNode> {
+        let mut scene = self.inner.capture_scene();
+        if self.full_repaint_frames > 0 {
+            apply_full_repaint_marker(&mut scene);
+        }
+        scene
     }
 
     fn set_viewport(&mut self, viewport: ViewportSize) {
@@ -166,6 +186,18 @@ where
     fn needs_redraw(&self) -> bool {
         self.inner.needs_redraw()
     }
+}
+
+fn apply_full_repaint_marker(scene: &mut [RenderNode]) {
+    let Some(root) = scene.first_mut() else {
+        return;
+    };
+
+    let background = root.style.background.unwrap_or(Color::rgb(224, 239, 247));
+    root.style.background = Some(Color {
+        b: background.b ^ 1,
+        ..background
+    });
 }
 
 struct FrameProfiler {
@@ -470,6 +502,7 @@ fn handle_message(state: &mut PrintLTools, message: Message) -> bool {
 
 fn handle_tray_event(state: &mut PrintLTools, event: TrayEvent) -> bool {
     match event {
+        TrayEvent::HideLauncher => minimize_to_tray(state),
         TrayEvent::OpenLauncher => {
             if state.open_launcher_on_tray_click {
                 state.view = View::Launcher;
@@ -1998,6 +2031,21 @@ mod tests {
     #[test]
     fn stylesheet_parses() {
         let _ = super::stylesheet();
+    }
+
+    #[test]
+    fn full_repaint_marker_changes_the_root_surface_style() {
+        let mut scene = vec![
+            RenderNode::container(cssimpler::core::LayoutBox::new(0.0, 0.0, 520.0, 680.0))
+                .with_style(cssimpler::core::VisualStyle {
+                    background: Some(Color::rgb(224, 239, 247)),
+                    ..Default::default()
+                }),
+        ];
+
+        super::apply_full_repaint_marker(&mut scene);
+
+        assert_eq!(scene[0].style.background, Some(Color::rgb(224, 239, 246)));
     }
 
     #[test]
