@@ -26,6 +26,8 @@ use crate::usb::{self, DriveInfo};
 const MAX_USB_DRIVE_BUTTONS: usize = 16;
 const PROFILE_ENV_VAR: &str = "PRINTLTOOLS_PROFILE";
 const PROFILE_PATH_ENV_VAR: &str = "PRINTLTOOLS_PROFILE_PATH";
+const WINDOW_WIDTH: usize = 520;
+const WINDOW_HEIGHT: usize = 680;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum View {
@@ -108,13 +110,14 @@ pub fn run() -> cssimpler::renderer::Result<()> {
     let app = PollingSceneProvider {
         inner: App::new(PrintLTools::new(), stylesheet(), update, view),
         profiler: FrameProfiler::from_env(),
+        window_positioned: false,
     };
 
     cssimpler::renderer::run_with_scene_provider(
         WindowConfig {
             clear_color: Color::rgb(54, 67, 78),
             frame_time: Duration::from_millis(16),
-            ..WindowConfig::new("PrintLTools", 900, 760)
+            ..WindowConfig::new("PrintLTools", WINDOW_WIDTH, WINDOW_HEIGHT)
                 .with_glass_capable(true)
                 .with_decorations(false)
         },
@@ -125,6 +128,7 @@ pub fn run() -> cssimpler::renderer::Result<()> {
 struct PollingSceneProvider<P> {
     inner: P,
     profiler: FrameProfiler,
+    window_positioned: bool,
 }
 
 impl<P> SceneProvider for PollingSceneProvider<P>
@@ -142,6 +146,12 @@ where
 
     fn set_viewport(&mut self, viewport: ViewportSize) {
         self.inner.set_viewport(viewport);
+        if !self.window_positioned {
+            self.window_positioned = true;
+            if let Err(error) = crate::window_control::position_bottom_right() {
+                eprintln!("PrintLTools window positioning failed: {error}");
+            }
+        }
     }
 
     fn set_element_interaction(&mut self, interaction: ElementInteractionState) -> bool {
@@ -2008,8 +2018,8 @@ mod tests {
         let accent =
             find_node_with_gradient(&scene).expect("tool accent should resolve a gradient");
 
-        assert_eq!(accent.layout.width, 24.0);
-        assert_eq!(accent.layout.height, 112.0);
+        assert_eq!(accent.layout.width, 18.0);
+        assert_eq!(accent.layout.height, 92.0);
         assert!(accent.layout.x >= 0.0);
         assert_eq!(accent.style.corner_radius.top_left, 9.0);
         assert_eq!(accent.style.corner_radius.bottom_left, 9.0);
@@ -2056,32 +2066,43 @@ mod tests {
             )
             .into();
 
-        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 900, 760);
+        let scene = build_render_tree_in_viewport(
+            &root,
+            &super::stylesheet(),
+            super::WINDOW_WIDTH,
+            super::WINDOW_HEIGHT,
+        );
         let scrollport = find_node_by_id(&scene, "shadow-scrollport")
             .expect("shadow scrollport should be rendered");
         let content =
             find_node_by_id(&scene, "shadow-content").expect("content should be rendered");
         let card = find_node_by_id(&scene, "shadow-card").expect("card should be rendered");
 
-        assert_eq!(content.layout.x, 42.0);
-        assert_eq!(content.layout.y, 142.0);
-        assert_eq!(card.layout.x, 42.0);
-        assert_eq!(scrollport.layout.x, content.layout.x - 28.0);
-        assert_eq!(scrollport.layout.y, content.layout.y - 28.0);
-        assert_eq!(scrollport.content_inset.left, 28.0);
-        assert_eq!(scrollport.content_inset.top, 28.0);
-        assert_eq!(scrollport.content_inset.bottom, 40.0);
+        assert_eq!(content.layout.x, 22.0);
+        assert_eq!(content.layout.y, 146.0);
+        assert_eq!(card.layout.x, 22.0);
+        assert_eq!(scrollport.layout.x, content.layout.x - 18.0);
+        assert_eq!(scrollport.layout.y, content.layout.y - 18.0);
+        assert_eq!(scrollport.content_inset.left, 18.0);
+        assert_eq!(scrollport.content_inset.top, 18.0);
+        assert_eq!(scrollport.content_inset.bottom, 30.0);
     }
 
     #[test]
     fn topbar_uses_minimize_instead_of_quit() {
         let root = super::top_actions(super::View::Launcher);
-        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 480, 48);
+        let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 476, 40);
         let mut text = Vec::new();
         collect_text(&scene, &mut text);
 
         assert!(text.iter().any(|value| value == "Minimize"));
         assert!(!text.iter().any(|value| value == "Quit"));
+        assert!(
+            scene
+                .children
+                .iter()
+                .all(|button| button.layout.x + button.layout.width <= 476.0)
+        );
     }
 
     #[test]
@@ -2097,8 +2118,8 @@ mod tests {
 
         let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 80, 80);
         let svg_node = find_svg_node(&scene).expect("folder icon should resolve as SVG");
-        assert_eq!(svg_node.layout.width, 56.0);
-        assert_eq!(svg_node.layout.height, 56.0);
+        assert_eq!(svg_node.layout.width, 44.0);
+        assert_eq!(svg_node.layout.height, 44.0);
 
         let RenderKind::Svg(svg) = &svg_node.kind else {
             panic!("folder icon should resolve as SVG");
@@ -2149,8 +2170,8 @@ mod tests {
 
         let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 80, 80);
         let svg_node = find_svg_node(&scene).expect("usb icon should resolve as SVG");
-        assert_eq!(svg_node.layout.width, 56.0);
-        assert_eq!(svg_node.layout.height, 56.0);
+        assert_eq!(svg_node.layout.width, 44.0);
+        assert_eq!(svg_node.layout.height, 44.0);
 
         let RenderKind::Svg(svg) = &svg_node.kind else {
             panic!("usb icon should resolve as SVG");
@@ -2197,8 +2218,8 @@ mod tests {
 
         let scene = build_render_tree_in_viewport(&root, &super::stylesheet(), 80, 80);
         let svg_node = find_svg_node(&scene).expect("pdf icon should resolve as SVG");
-        assert_eq!(svg_node.layout.width, 56.0);
-        assert_eq!(svg_node.layout.height, 56.0);
+        assert_eq!(svg_node.layout.width, 44.0);
+        assert_eq!(svg_node.layout.height, 44.0);
 
         let RenderKind::Svg(svg) = &svg_node.kind else {
             panic!("pdf icon should resolve as SVG");

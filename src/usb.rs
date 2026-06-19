@@ -114,6 +114,7 @@ impl DriveKind {
 mod platform {
     use std::collections::{HashMap, HashSet, VecDeque};
 
+    use windows::Win32::Foundation::{CloseHandle, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows::Win32::Storage::FileSystem::{
         GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDrives, GetVolumeInformationW,
     };
@@ -121,7 +122,10 @@ mod platform {
         CCH_RM_SESSION_KEY, RM_PROCESS_INFO, RmEndSession, RmForceShutdown, RmGetList,
         RmRegisterResources, RmShutdown, RmStartSession,
     };
-    use windows::core::{PCWSTR, PWSTR};
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
+    };
+    use windows::core::{HRESULT, PCWSTR, PWSTR};
 
     use super::*;
 
@@ -131,6 +135,12 @@ mod platform {
     const ERROR_SUCCESS: u32 = 0;
     const HELPER_ARG: &str = "--usb-eject-helper";
     const MAX_RESTART_MANAGER_RESOURCES: usize = 4096;
+    const ACROBAT_FORCE_EXIT_TIMEOUT: Duration = Duration::from_millis(1200);
+    const RESTART_MANAGER_FORCE_EXIT_TIMEOUT: Duration = Duration::from_millis(1200);
+    const RESTART_MANAGER_POLL_INTERVAL: Duration = Duration::from_millis(50);
+    const SHELL_EJECT_SETTLE_TIMEOUT: Duration = Duration::from_secs(12);
+    const MOUNTVOL_SETTLE_TIMEOUT: Duration = Duration::from_secs(5);
+    const EJECT_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
     pub fn list_drives() -> Result<Vec<DriveInfo>, String> {
         let mask = unsafe { GetLogicalDrives() };
@@ -186,9 +196,16 @@ mod platform {
             collect_restart_manager_resources(&root);
         let mut restart_manager_processes = Vec::new();
         let mut admin_required = false;
+        let mut restart_manager_cleanup_failed = false;
 
         match close_restart_manager_locks(&resources) {
-            Ok(actions) => restart_manager_processes = actions,
+            Ok(actions) => {
+                restart_manager_cleanup_failed = actions.iter().any(|action| {
+                    action.action.starts_with("failed")
+                        || action.action == "still locking after forced shutdown"
+                });
+                restart_manager_processes = actions;
+            }
             Err(RestartManagerError::AccessDenied(error)) if allow_elevation => {
                 return run_elevated_helper(&drive, &root).map(|mut summary| {
                     summary.drive = drive;
@@ -204,30 +221,39 @@ mod platform {
                 );
             }
             Err(RestartManagerError::Other(error)) => {
+                restart_manager_cleanup_failed = true;
                 notes.push(format!("Restart Manager could not close locks: {error}"));
             }
         }
 
-        match close_explorer_windows_on_drive(&root) {
-            Ok(actions) => {
-                if !actions.is_empty() {
-                    notes.push(format!(
-                        "Closed {} Explorer window(s) open on the selected drive.",
-                        actions.len()
-                    ));
+        let process_scan_actions = if admin_required || restart_manager_cleanup_failed {
+            notes.push(
+                "Further cleanup and eject were stopped because a locking process was not verified closed."
+                    .to_string(),
+            );
+            Vec::new()
+        } else {
+            match close_explorer_windows_on_drive(&root) {
+                Ok(actions) => {
+                    if !actions.is_empty() {
+                        notes.push(format!(
+                            "Closed {} Explorer window(s) open on the selected drive.",
+                            actions.len()
+                        ));
+                    }
                 }
+                Err(error) => notes.push(format!("Explorer window cleanup failed: {error}")),
             }
-            Err(error) => notes.push(format!("Explorer window cleanup failed: {error}")),
-        }
 
-        let process_scan_actions = match close_processes_referencing_drive(&root) {
-            Ok(process_scan_actions) => {
-                restart_explorer_if_needed(&process_scan_actions, &mut notes);
-                process_scan_actions
-            }
-            Err(error) => {
-                notes.push(format!("Process scan failed: {error}"));
-                Vec::new()
+            match close_processes_referencing_drive(&root) {
+                Ok(process_scan_actions) => {
+                    restart_explorer_if_needed(&process_scan_actions, &mut notes);
+                    process_scan_actions
+                }
+                Err(error) => {
+                    notes.push(format!("Process scan failed: {error}"));
+                    Vec::new()
+                }
             }
         };
 
@@ -245,12 +271,12 @@ mod platform {
             Ok(remaining_locks) => {
                 let has_locks = !remaining_locks.is_empty();
                 if has_locks {
-                    merge_process_actions(&mut restart_manager_processes, remaining_locks);
                     notes.push(
                         "Eject was not requested because Restart Manager still reports processes locking the drive."
                             .to_string(),
                     );
                 }
+                reconcile_restart_manager_actions(&mut restart_manager_processes, remaining_locks);
                 false
             }
             Err(RestartManagerError::AccessDenied(error)) if allow_elevation => {
@@ -282,12 +308,25 @@ mod platform {
             .iter()
             .any(|action| action.action == "still locking after cleanup");
         let can_request_eject = !admin_required
+            && !restart_manager_cleanup_failed
             && !process_cleanup_failed
             && !lock_check_failed
             && !has_remaining_locks;
 
         let eject_result = if can_request_eject {
-            Some(request_shell_eject(&root))
+            match request_shell_eject(&root) {
+                Err(EjectRequestError::RetryElevated(error)) if allow_elevation => {
+                    return run_elevated_helper(&drive, &root).map(|mut summary| {
+                        summary.drive = drive;
+                        summary.notes.insert(
+                            1,
+                            format!("The non-elevated eject fallback required elevation: {error}"),
+                        );
+                        summary
+                    });
+                }
+                result => Some(result.map_err(EjectRequestError::into_message)),
+            }
         } else {
             None
         };
@@ -426,6 +465,20 @@ mod platform {
         note: String,
     }
 
+    #[derive(Debug)]
+    enum EjectRequestError {
+        RetryElevated(String),
+        Other(String),
+    }
+
+    impl EjectRequestError {
+        fn into_message(self) -> String {
+            match self {
+                Self::RetryElevated(message) | Self::Other(message) => message,
+            }
+        }
+    }
+
     fn close_restart_manager_locks(
         resources: &[PathBuf],
     ) -> Result<Vec<ProcessAction>, RestartManagerError> {
@@ -438,30 +491,120 @@ mod platform {
         }
 
         let mut actions = process_actions_from_rm(&initial, "detected by Restart Manager");
-        session.shutdown(false)?;
-        thread::sleep(Duration::from_millis(1200));
+        let mut force_terminated_pids = HashSet::new();
 
-        let remaining_after_graceful = session.processes()?;
-        if !remaining_after_graceful.is_empty() {
-            session.shutdown(true)?;
-            thread::sleep(Duration::from_millis(1200));
+        for process in &initial {
+            let pid = process.Process.dwProcessId;
+            let name = wide_fixed_to_string(&process.strAppName);
+            if is_acrobat_process_name(&name) {
+                force_terminate_process(pid, ACROBAT_FORCE_EXIT_TIMEOUT)?;
+                force_terminated_pids.insert(pid);
+            }
         }
 
-        let remaining_pids = session
-            .processes()?
-            .into_iter()
-            .map(|process| process.Process.dwProcessId)
-            .collect::<HashSet<_>>();
+        if !session.processes()?.is_empty() {
+            session.shutdown(true)?;
+        }
+
+        let remaining_pids =
+            wait_for_session_locks_to_clear(&session, RESTART_MANAGER_FORCE_EXIT_TIMEOUT)?
+                .into_iter()
+                .map(|process| process.Process.dwProcessId)
+                .collect::<HashSet<_>>();
 
         for action in &mut actions {
             action.action = if remaining_pids.contains(&action.pid) {
-                "still locking after Restart Manager shutdown".to_string()
+                "still locking after forced shutdown".to_string()
+            } else if force_terminated_pids.contains(&action.pid) {
+                "force terminated and verified closed".to_string()
             } else {
-                "closed by Restart Manager".to_string()
+                "closed by forced Restart Manager shutdown".to_string()
             };
         }
 
         Ok(actions)
+    }
+
+    fn is_acrobat_process_name(name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        name.contains("acrobat") || name.contains("acrord")
+    }
+
+    fn force_terminate_process(pid: u32, timeout: Duration) -> Result<(), RestartManagerError> {
+        let handle =
+            match unsafe { OpenProcess(PROCESS_TERMINATE | PROCESS_SYNCHRONIZE, false, pid) } {
+                Ok(handle) => handle,
+                Err(error) if error.code() == HRESULT::from_win32(87) => return Ok(()),
+                Err(error) => {
+                    return Err(restart_manager_windows_error(
+                        format!("Could not open Acrobat PID {pid} for forced termination"),
+                        error,
+                    ));
+                }
+            };
+
+        let result = unsafe {
+            if WaitForSingleObject(handle, 0) == WAIT_OBJECT_0 {
+                Ok(())
+            } else {
+                match TerminateProcess(handle, 1) {
+                    Err(error) => Err(restart_manager_windows_error(
+                        format!("Could not force terminate Acrobat PID {pid}"),
+                        error,
+                    )),
+                    Ok(()) => match WaitForSingleObject(handle, duration_millis_u32(timeout)) {
+                        WAIT_OBJECT_0 => Ok(()),
+                        WAIT_TIMEOUT => Err(RestartManagerError::Other(format!(
+                            "Acrobat PID {pid} did not exit within {} ms after forced termination.",
+                            timeout.as_millis()
+                        ))),
+                        WAIT_FAILED => Err(RestartManagerError::Other(format!(
+                            "Waiting for Acrobat PID {pid} to exit failed: {}",
+                            windows::core::Error::from_win32()
+                        ))),
+                        other => Err(RestartManagerError::Other(format!(
+                            "Waiting for Acrobat PID {pid} returned unexpected status {}.",
+                            other.0
+                        ))),
+                    },
+                }
+            }
+        };
+
+        let _ = unsafe { CloseHandle(handle) };
+        result
+    }
+
+    fn restart_manager_windows_error(
+        context: String,
+        error: windows::core::Error,
+    ) -> RestartManagerError {
+        let message = format!("{context}: {error}");
+        if error.code() == HRESULT::from_win32(5) {
+            RestartManagerError::AccessDenied(message)
+        } else {
+            RestartManagerError::Other(message)
+        }
+    }
+
+    fn duration_millis_u32(duration: Duration) -> u32 {
+        duration.as_millis().min(u32::MAX as u128) as u32
+    }
+
+    fn wait_for_session_locks_to_clear(
+        session: &RmSession,
+        timeout: Duration,
+    ) -> Result<Vec<RM_PROCESS_INFO>, RestartManagerError> {
+        let started = Instant::now();
+
+        loop {
+            let locks = session.processes()?;
+            if locks.is_empty() || started.elapsed() >= timeout {
+                return Ok(locks);
+            }
+
+            thread::sleep(RESTART_MANAGER_POLL_INTERVAL);
+        }
     }
 
     fn process_actions_from_rm(processes: &[RM_PROCESS_INFO], action: &str) -> Vec<ProcessAction> {
@@ -489,8 +632,24 @@ mod platform {
         ))
     }
 
-    fn merge_process_actions(target: &mut Vec<ProcessAction>, additions: Vec<ProcessAction>) {
-        for addition in additions {
+    fn reconcile_restart_manager_actions(
+        target: &mut Vec<ProcessAction>,
+        remaining: Vec<ProcessAction>,
+    ) {
+        let remaining_pids = remaining
+            .iter()
+            .map(|action| action.pid)
+            .collect::<HashSet<_>>();
+
+        for action in target.iter_mut() {
+            if action.action == "still locking after forced shutdown"
+                && !remaining_pids.contains(&action.pid)
+            {
+                action.action = "lock released during final cleanup".to_string();
+            }
+        }
+
+        for addition in remaining {
             if let Some(existing) = target.iter_mut().find(|action| action.pid == addition.pid) {
                 if existing.name.is_empty() {
                     existing.name = addition.name;
@@ -716,9 +875,9 @@ foreach ($proc in $matches) {{
         Ok(parse_process_actions(&output))
     }
 
-    fn request_shell_eject(root: &Path) -> Result<EjectOutcome, String> {
-        let root = root.to_string_lossy();
-        let drive = root.trim_end_matches('\\');
+    fn request_shell_eject(root: &Path) -> Result<EjectOutcome, EjectRequestError> {
+        let root_text = root.to_string_lossy();
+        let drive = root_text.trim_end_matches('\\');
         let script = format!(
             r#"
 $ErrorActionPreference = 'Stop'
@@ -745,28 +904,89 @@ if ($null -ne $verb) {{
 }} else {{
     $item.InvokeVerb('Eject')
 }}
-Start-Sleep -Seconds 3
-if (Test-Path -LiteralPath $root) {{
-    throw "Windows still reports $root as mounted after the Shell eject request."
-}} else {{
-    Write-Output 'Shell eject completed and the drive is no longer mounted.'
-}}
+Write-Output 'Windows Shell eject request submitted.'
 "#,
-            powershell_single_quoted(&root),
+            powershell_single_quoted(&root_text),
             powershell_single_quoted(drive)
         );
 
-        let output = run_powershell(&script, Duration::from_secs(30), "safe eject")?;
-        let note = output
-            .lines()
-            .rev()
-            .map(str::trim)
-            .find(|line| !line.is_empty())
-            .unwrap_or("Eject request completed.")
-            .to_string();
-        let method = EjectMethod::Shell;
+        run_powershell(&script, Duration::from_secs(20), "safe eject")
+            .map_err(EjectRequestError::Other)?;
 
-        Ok(EjectOutcome { method, note })
+        if wait_for_drive_to_unmount(root, SHELL_EJECT_SETTLE_TIMEOUT)
+            .map_err(EjectRequestError::Other)?
+        {
+            return Ok(EjectOutcome {
+                method: EjectMethod::Shell,
+                note: "Shell eject completed and the drive is no longer mounted.".to_string(),
+            });
+        }
+
+        let mut mountvol = Command::new("mountvol.exe");
+        mountvol.arg(root).arg("/p");
+        run_command_with_timeout(
+            &mut mountvol,
+            Duration::from_secs(20),
+            "mountvol /p fallback",
+        )
+        .map_err(|error| {
+            EjectRequestError::RetryElevated(format!(
+                "Windows Shell did not unmount {root_text}; mountvol /p failed: {error}"
+            ))
+        })?;
+
+        if !wait_for_drive_to_unmount(root, MOUNTVOL_SETTLE_TIMEOUT)
+            .map_err(EjectRequestError::Other)?
+        {
+            return Err(EjectRequestError::Other(format!(
+                "Windows still reports {root_text} as mounted after Shell eject and mountvol /p."
+            )));
+        }
+
+        Ok(EjectOutcome {
+            method: EjectMethod::Mountvol,
+            note: "Windows Shell did not complete the eject; mountvol /p safely dismounted the volume."
+                .to_string(),
+        })
+    }
+
+    fn wait_for_drive_to_unmount(root: &Path, timeout: Duration) -> Result<bool, String> {
+        let started = Instant::now();
+
+        loop {
+            if !drive_is_mounted(root)? {
+                return Ok(true);
+            }
+            if started.elapsed() >= timeout {
+                return Ok(false);
+            }
+
+            thread::sleep(EJECT_POLL_INTERVAL);
+        }
+    }
+
+    fn drive_is_mounted(root: &Path) -> Result<bool, String> {
+        let drive_bit = drive_bit(root)?;
+        let mask = unsafe { GetLogicalDrives() };
+        if mask == 0 {
+            return Err("GetLogicalDrives failed while verifying the eject request.".to_string());
+        }
+
+        Ok(mask & drive_bit != 0)
+    }
+
+    fn drive_bit(root: &Path) -> Result<u32, String> {
+        let value = root.to_string_lossy();
+        let Some(letter) = value.chars().next() else {
+            return Err("Drive root is empty.".to_string());
+        };
+        if !letter.is_ascii_alphabetic() {
+            return Err(format!(
+                "Drive root `{value}` does not start with a drive letter."
+            ));
+        }
+
+        Ok(1 << (letter.to_ascii_uppercase() as u8 - b'A'))
     }
 
     fn restart_explorer_if_needed(actions: &[ProcessAction], notes: &mut Vec<String>) {
@@ -1149,6 +1369,58 @@ if (-not (Test-Path -LiteralPath $out)) {{
         }
 
         seen.into_values().collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn drive_bit_accepts_normalized_and_lowercase_roots() {
+            assert_eq!(drive_bit(Path::new("E:\\")).unwrap(), 1 << 4);
+            assert_eq!(drive_bit(Path::new("e:")).unwrap(), 1 << 4);
+        }
+
+        #[test]
+        fn reconcile_restart_manager_actions_marks_released_locks() {
+            let mut actions = vec![ProcessAction {
+                pid: 22560,
+                name: "Adobe Acrobat".to_string(),
+                path: None,
+                action: "still locking after forced shutdown".to_string(),
+            }];
+
+            reconcile_restart_manager_actions(&mut actions, Vec::new());
+
+            assert_eq!(actions[0].action, "lock released during final cleanup");
+        }
+
+        #[test]
+        fn reconcile_restart_manager_actions_keeps_remaining_locks() {
+            let mut actions = vec![ProcessAction {
+                pid: 22560,
+                name: "Adobe Acrobat".to_string(),
+                path: None,
+                action: "still locking after forced shutdown".to_string(),
+            }];
+            let remaining = vec![ProcessAction {
+                pid: 22560,
+                name: "Adobe Acrobat".to_string(),
+                path: None,
+                action: "still locking after cleanup".to_string(),
+            }];
+
+            reconcile_restart_manager_actions(&mut actions, remaining);
+
+            assert_eq!(actions[0].action, "still locking after cleanup");
+        }
+
+        #[test]
+        fn acrobat_process_names_are_detected_for_immediate_termination() {
+            assert!(is_acrobat_process_name("Adobe Acrobat 2025"));
+            assert!(is_acrobat_process_name("AcroRd32.exe"));
+            assert!(!is_acrobat_process_name("explorer.exe"));
+        }
     }
 }
 
